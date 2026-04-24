@@ -1,0 +1,38 @@
+{
+  "name": "pharmsub-backend",
+  "version": "2.0.0",
+  "description": "PharmSub Backend API — Express + PostgreSQL (Supabase)",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:migrate": "ts-node src/db/migrate.ts",
+    "db:seed": "ts-node src/db/seed.ts"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "morgan": "^1.10.0",
+    "helmet": "^7.1.0",
+    "express-validator": "^7.1.0",
+    "date-fns": "^3.6.0",
+    "exceljs": "^4.4.0",
+    "pdfkit": "^0.15.0",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "@types/express": "^4.17.21",
+    "@types/pg": "^8.11.6",
+    "@types/cors": "^2.8.17",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^20.14.9",
+    "@types/pdfkit": "^0.13.4",
+    "ts-node-dev": "^2.0.0",
+    "ts-node": "^10.9.2",
+    "@types/bcryptjs": "^2.4.6"
+  }
+}
