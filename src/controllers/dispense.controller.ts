@@ -728,7 +728,7 @@ export async function createMockPrescription(req: Request, res: Response, next: 
       }
 
       // สร้าง queue entry — จำลองการลงทะเบียนรับบัตรคิวตั้งแต่ต้น
-      const queueNumber = await nextQueueNumber(client);
+      const queueNumber = await nextQueueNumber(client, rx.ward);
       const { rows: qRows } = await client.query(
         `INSERT INTO ${SCHEMA}.queue_entries (queue_number, patient_id, note)
          VALUES ($1, $2, $3) RETURNING queue_id`,
