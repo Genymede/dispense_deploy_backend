@@ -163,6 +163,28 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       });
     }
 
+    // Incomplete drug records (missing display name / price / min stock)
+    const { rows: incompleteRows } = await query(
+      `SELECT ms.med_sid, COALESCE(ms.med_showname, mt.med_name) AS drug_name
+       FROM ${SCHEMA}.med_subwarehouse ms
+       JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+       WHERE ms.med_showname IS NULL
+          OR ms.cost_price   IS NULL
+          OR ms.unit_price   IS NULL
+          OR ms.min_quantity IS NULL
+       ORDER BY ms.created_at DESC
+       LIMIT 50`
+    );
+    for (const r of incompleteRows) {
+      liveAlerts.push({
+        alert_type: 'incomplete_record',
+        med_sid: r.med_sid,
+        drug_name: r.drug_name,
+        message: 'ข้อมูลยายังไม่ครบถ้วน กรุณาเพิ่มชื่อแสดง, ราคา และสต็อกขั้นต่ำ',
+        severity: 'warning',
+      });
+    }
+
     // Upcoming cut-off (within 3 days)
     try {
       const { rows: cutRows } = await query(
