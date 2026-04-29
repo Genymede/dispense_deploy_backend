@@ -120,7 +120,7 @@ const migrations: string[] = [
     created_at   TIMESTAMP DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_queue_status ON ${SCHEMA}.queue_entries(status)`,
-  `CREATE INDEX IF NOT EXISTS idx_queue_date   ON ${SCHEMA}.queue_entries(DATE(created_at))`,
+  `CREATE INDEX IF NOT EXISTS idx_queue_date   ON ${SCHEMA}.queue_entries(created_at)`,
 
   // updated_at trigger function
   `CREATE OR REPLACE FUNCTION ${SCHEMA}.update_updated_at_column()
