@@ -56,6 +56,8 @@ export async function getDrugs(req: Request, res: Response, next: NextFunction) 
         ms.mfg_date,
         ms.exp_date,
         ms.is_expired,
+        ms.drug_code,
+        ms.image_url,
         ms.created_at,
         ms.updated_at,
         mt.med_name,

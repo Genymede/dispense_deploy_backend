@@ -204,6 +204,10 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS tracking_number TEXT`,
   `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS delivered_at    TIMESTAMPTZ`,
 
+  // ── med_subwarehouse: เพิ่มคอลัมน์ให้ครบเหมือน inventory.items ──────────────
+  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS drug_code VARCHAR(50)`,
+  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS image_url  TEXT`,
+
   // ── stock requisition: เพิ่มคอลัมน์สำหรับรับยาจากคลังหลัก ─────────────────
   // source_type: ระบุแหล่งที่มา เช่น 'main_warehouse', 'supplier', 'adjust'
   `ALTER TABLE ${SCHEMA}.stock_transactions ADD COLUMN IF NOT EXISTS source_type VARCHAR(30)`,
