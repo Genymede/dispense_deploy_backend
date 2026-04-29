@@ -203,6 +203,16 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS courier_phone   TEXT`,
   `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS tracking_number TEXT`,
   `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS delivered_at    TIMESTAMPTZ`,
+
+  // ── stock requisition: เพิ่มคอลัมน์สำหรับรับยาจากคลังหลัก ─────────────────
+  // source_type: ระบุแหล่งที่มา เช่น 'main_warehouse', 'supplier', 'adjust'
+  `ALTER TABLE ${SCHEMA}.stock_transactions ADD COLUMN IF NOT EXISTS source_type VARCHAR(30)`,
+  // mfg_date: วันผลิต — บันทึกตอน stockIn เพื่อส่งต่อไปสร้าง lot ตอน approve
+  `ALTER TABLE ${SCHEMA}.stock_transactions ADD COLUMN IF NOT EXISTS mfg_date DATE`,
+  // lot_id: FK กลับไปยัง lot ที่สร้างตอน approve (ใช้ trace transaction ↔ lot)
+  `ALTER TABLE ${SCHEMA}.stock_transactions ADD COLUMN IF NOT EXISTS lot_id INTEGER REFERENCES ${SCHEMA}.med_stock_lots(lot_id) ON DELETE SET NULL`,
+  // med_stock_lots: status สำหรับ quarantine / recalled / expired tracking
+  `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active','quarantine','recalled','expired'))`,
 ];
 
 async function migrate() {

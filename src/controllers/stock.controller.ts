@@ -70,23 +70,24 @@ export async function deductFefo(
 async function recordTx(client: any, data: {
   med_sid: number; med_id: number; tx_type: string;
   quantity: number; balance_before: number; balance_after: number;
-  lot_number?: string; expiry_date?: string; reference_no?: string;
-  prescription_no?: string; ward_from?: string;
+  lot_number?: string; expiry_date?: string; mfg_date?: string;
+  reference_no?: string; prescription_no?: string; ward_from?: string;
   performed_by?: string | null; note?: string;
-  approval_status?: string;
+  approval_status?: string; source_type?: string;
 }) {
   const { rows } = await client.query(
     `INSERT INTO ${SCHEMA}.stock_transactions
        (med_sid, med_id, tx_type, quantity, balance_before, balance_after,
-        lot_number, expiry_date, reference_no, prescription_no,
-        ward_from, performed_by, note, approval_status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        lot_number, expiry_date, mfg_date, reference_no, prescription_no,
+        ward_from, performed_by, note, approval_status, source_type)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      RETURNING *`,
     [data.med_sid, data.med_id, data.tx_type, data.quantity,
      data.balance_before, data.balance_after,
-     data.lot_number, data.expiry_date, data.reference_no,
-     data.prescription_no, data.ward_from, data.performed_by, data.note,
-     data.approval_status ?? 'approved']
+     data.lot_number, data.expiry_date, data.mfg_date ?? null,
+     data.reference_no, data.prescription_no, data.ward_from,
+     data.performed_by, data.note,
+     data.approval_status ?? 'approved', data.source_type ?? null]
   );
   return rows[0];
 }
@@ -145,8 +146,9 @@ export async function stockIn(req: Request, res: Response, next: NextFunction) {
     await client.query(`SET search_path TO ${SCHEMA}, public`);
 
     const {
-      med_sid, quantity, lot_number, expiry_date,
-      reference_no, performed_by, note
+      med_sid, quantity, lot_number, expiry_date, mfg_date,
+      reference_no, performed_by, note,
+      source_type,   // 'main_warehouse' | 'supplier' | undefined
     } = req.body;
 
     if (!med_sid || !quantity || quantity <= 0)
@@ -178,9 +180,9 @@ export async function stockIn(req: Request, res: Response, next: NextFunction) {
       med_sid: drug.med_sid, med_id: drug.med_id,
       tx_type: 'in', quantity: parseInt(quantity),
       balance_before: balBefore, balance_after: balBefore,
-      lot_number, expiry_date, reference_no,
+      lot_number, expiry_date, mfg_date, reference_no,
       performed_by: resolvedPerformer ?? undefined, note,
-      approval_status: 'pending',
+      approval_status: 'pending', source_type,
     });
 
     await client.query('COMMIT');
@@ -235,25 +237,29 @@ export async function approveStockIn(req: Request, res: Response, next: NextFunc
       throw new AppError('รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ', 400);
 
     // เพิ่ม lot และอัปเดตสต็อก
-    await client.query(
-      `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, note)
-       VALUES ($1, $2, $3, $4::date, $5)`,
-      [tx.med_sid, tx.lot_number || null, tx.quantity, tx.expiry_date || null, tx.note || null]
+    const { rows: lotRows } = await client.query(
+      `INSERT INTO ${SCHEMA}.med_stock_lots
+         (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
+       VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active')
+       RETURNING lot_id`,
+      [tx.med_sid, tx.lot_number || null, tx.quantity,
+       tx.expiry_date || null, tx.mfg_date || null, tx.note || null]
     );
+    const newLotId = lotRows[0].lot_id;
     const balAfter = await recalcTotal(parseInt(tx.med_sid), client);
     await client.query(
       `UPDATE ${SCHEMA}.med_subwarehouse SET is_expired = false WHERE med_sid = $1`,
       [tx.med_sid]
     );
 
-    // อัปเดต transaction
+    // อัปเดต transaction — บันทึก lot_id ที่สร้าง เพื่อ trace ย้อนกลับได้
     const { rows: updated } = await client.query(
       `UPDATE ${SCHEMA}.stock_transactions
        SET approval_status = 'approved', balance_after = $1,
-           approved_by = $2, approved_at = NOW()
-       WHERE tx_id = $3
+           approved_by = $2, approved_at = NOW(), lot_id = $3
+       WHERE tx_id = $4
        RETURNING *`,
-      [balAfter, resolvedApprover, tx_id]
+      [balAfter, resolvedApprover, newLotId, tx_id]
     );
 
     await client.query('COMMIT');
