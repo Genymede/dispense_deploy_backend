@@ -151,14 +151,13 @@ export async function createQueue(req: Request, res: Response, next: NextFunctio
     await client.query('BEGIN');
     await client.query(`SET search_path TO ${SCHEMA}, public`);
 
-    const { patient_id, note } = req.body;
+    const { patient_id, note, ward } = req.body;
 
-    // Auto-reset counter when no queues exist for today yet (new Bangkok day)
-    // Uses pure SQL to avoid JS/Node timezone issues
+    // Auto-reset all per-prefix counters when no queues exist for today yet
     await client.query(
       `UPDATE ${SCHEMA}.system_settings
        SET value = '0', updated_at = NOW()
-       WHERE key = 'queue_current_number'
+       WHERE key LIKE 'queue_current_number_%'
          AND NOT EXISTS (
            SELECT 1 FROM ${SCHEMA}.queue_entries
            WHERE DATE(created_at AT TIME ZONE 'Asia/Bangkok')
@@ -166,7 +165,7 @@ export async function createQueue(req: Request, res: Response, next: NextFunctio
          )`
     );
 
-    const queue_number = await nextQueueNumber(client);
+    const queue_number = await nextQueueNumber(client, ward);
 
     const { rows } = await client.query(
       `INSERT INTO ${SCHEMA}.queue_entries (queue_number, patient_id, note)
