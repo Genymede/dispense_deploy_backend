@@ -58,7 +58,6 @@ export async function getDrugs(req: Request, res: Response, next: NextFunction) 
         ms.is_expired,
         ms.drug_code,
         ms.image_url,
-        ms.units_per_pack,
         ms.created_at,
         ms.updated_at,
         mt.med_name,
@@ -166,7 +165,7 @@ export async function createDrug(req: Request, res: Response, next: NextFunction
       med_id, med_quantity = 0, packaging_type, is_divisible = false,
       location, med_showname, med_showname_eng,
       min_quantity, max_quantity, cost_price, unit_price,
-      mfg_date, exp_date, units_per_pack
+      mfg_date, exp_date
     } = req.body;
 
     if (!med_id || !packaging_type) throw new AppError('med_id และ packaging_type จำเป็น', 400);
@@ -179,12 +178,12 @@ export async function createDrug(req: Request, res: Response, next: NextFunction
       `INSERT INTO ${SCHEMA}.med_subwarehouse
          (med_id, med_quantity, packaging_type, is_divisible, location,
           med_showname, med_showname_eng, min_quantity, max_quantity,
-          cost_price, unit_price, mfg_date, exp_date, units_per_pack)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+          cost_price, unit_price, mfg_date, exp_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [med_id, med_quantity, packaging_type, is_divisible, location,
        med_showname, med_showname_eng, min_quantity, max_quantity,
-       cost_price, unit_price, mfg_date, exp_date, units_per_pack ?? null]
+       cost_price, unit_price, mfg_date, exp_date]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -198,7 +197,7 @@ export async function updateDrug(req: Request, res: Response, next: NextFunction
       packaging_type, is_divisible, location,
       med_showname, med_showname_eng,
       min_quantity, max_quantity, cost_price, unit_price,
-      mfg_date, exp_date, is_expired, units_per_pack
+      mfg_date, exp_date, is_expired
     } = req.body;
 
     const { rows } = await query(
@@ -215,14 +214,13 @@ export async function updateDrug(req: Request, res: Response, next: NextFunction
         mfg_date        = COALESCE($10, mfg_date),
         exp_date        = COALESCE($11, exp_date),
         is_expired      = COALESCE($12, is_expired),
-        units_per_pack  = COALESCE($13, units_per_pack),
         updated_at      = NOW()
-       WHERE med_sid = $14
+       WHERE med_sid = $13
        RETURNING *`,
       [packaging_type, is_divisible, location,
        med_showname, med_showname_eng,
        min_quantity, max_quantity, cost_price, unit_price,
-       mfg_date, exp_date, is_expired, units_per_pack ?? null, med_sid]
+       mfg_date, exp_date, is_expired, med_sid]
     );
     if (!rows.length) throw new AppError('ไม่พบรายการยา', 404);
     res.json(rows[0]);

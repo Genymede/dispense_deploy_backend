@@ -225,8 +225,8 @@ const migrations: string[] = [
   // alert_log: ขยาย ENUM alert_type_enum ให้รองรับ incomplete_record
   `ALTER TYPE ${SCHEMA}.alert_type_enum ADD VALUE IF NOT EXISTS 'incomplete_record'`,
 
-  // med_subwarehouse: จำนวนหน่วยฐาน (เม็ด) ต่อหน่วยจ่าย (ซอง)
-  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS units_per_pack INTEGER`,
+  // units_per_pack ถูกยกเลิก — ระบบจัดการสต็อกเป็นเม็ดอย่างเดียว
+  `ALTER TABLE ${SCHEMA}.med_subwarehouse DROP COLUMN IF EXISTS units_per_pack`,
 ];
 
 async function migrate() {
