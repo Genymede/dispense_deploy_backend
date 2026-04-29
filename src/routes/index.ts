@@ -1,4 +1,11 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+
+function requireApiKey(req: Request, res: Response, next: NextFunction) {
+  const key = req.headers['x-api-key'];
+  if (!key || key !== process.env.MAIN_WAREHOUSE_API_KEY)
+    return res.status(401).json({ error: 'Invalid or missing API key' });
+  next();
+}
 import { login, logout, me, getUsers } from '../controllers/auth.controller';
 import { getDrugs, getDrugById, getLots, createDrug, updateDrug, deleteDrug, getCategories, getMedTable } from '../controllers/drugs.controller';
 import { getTransactions, stockIn, receiveStock, adjustStock, returnStock, markExpired, getStockSummary, getLotsReport, getPendingStockIn, approveStockIn, rejectStockIn } from '../controllers/stock.controller';
@@ -64,7 +71,7 @@ r.get('/stock/summary',           getStockSummary);
 r.get('/stock/lots-report',       getLotsReport);
 r.get('/stock/pending-in',        getPendingStockIn);
 r.post('/stock/in',               stockIn);
-r.post('/stock/from-main',        receiveStock);
+r.post('/stock/from-main',        requireApiKey, receiveStock);
 r.post('/stock/adjust',           adjustStock);
 r.post('/stock/return',           returnStock);
 r.post('/stock/expired',          markExpired);
