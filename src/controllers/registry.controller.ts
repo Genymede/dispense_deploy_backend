@@ -189,7 +189,7 @@ export async function getMedDelivery(req: Request, res: Response, next: NextFunc
     if (search) { where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR md.receiver_name ILIKE $${p} OR md.receiver_phone ILIKE $${p})`; params.push(`%${search}%`); p++; }
     if (status) { where += ` AND md.status = $${p}`; params.push(status); p++; }
     const { rows } = await query(
-      `SELECT md.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number, pa.phone AS patient_phone
+      `SELECT md.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number, pa.phone AS patient_phone, pa.photo AS patient_photo
        FROM ${SCHEMA}.med_delivery md
        JOIN ${SCHEMA}.patient pa ON pa.patient_id = md.patient_id
        ${where} ORDER BY md.delivery_date DESC LIMIT $${p} OFFSET $${p + 1}`, [...params, limit, offset]);
