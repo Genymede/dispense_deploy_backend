@@ -92,6 +92,81 @@ async function recordTx(client: any, data: {
   return rows[0];
 }
 
+// ── POST /stock/receive — คลังหลักอนุมัติแล้ว เพิ่มสต็อกทันที ────────────────
+export async function receiveStock(req: Request, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET search_path TO ${SCHEMA}, public`);
+
+    const {
+      med_sid, quantity, lot_number, expiry_date, mfg_date,
+      reference_no, performed_by, note,
+      source_type = 'main_warehouse',
+    } = req.body;
+
+    if (!med_sid || !quantity || quantity <= 0)
+      throw new AppError('med_sid และ quantity (>0) จำเป็น', 400);
+
+    if (expiry_date) {
+      const exp = new Date(expiry_date);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      if (exp < today)
+        throw new AppError('ไม่สามารถรับยาที่หมดอายุแล้วเข้าคลังได้', 400);
+    }
+
+    const resolvedPerformer = performed_by != null
+      ? await resolveUserId(performed_by)
+      : ((req as any).currentUser?.id ?? null);
+
+    const { rows: drugRows } = await client.query(
+      `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_sid = $1 FOR UPDATE`,
+      [med_sid]
+    );
+    if (!drugRows.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
+
+    const drug      = drugRows[0];
+    const balBefore = parseInt(drug.med_quantity);
+
+    // สร้าง lot และเพิ่มสต็อกทันที
+    const { rows: lotRows } = await client.query(
+      `INSERT INTO ${SCHEMA}.med_stock_lots
+         (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
+       VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active')
+       RETURNING lot_id`,
+      [drug.med_sid, lot_number || null, parseInt(quantity),
+       expiry_date || null, mfg_date || null, note || null]
+    );
+    const newLotId  = lotRows[0].lot_id;
+    const balAfter  = await recalcTotal(drug.med_sid, client);
+    await client.query(
+      `UPDATE ${SCHEMA}.med_subwarehouse SET is_expired = false WHERE med_sid = $1`,
+      [drug.med_sid]
+    );
+
+    const tx = await recordTx(client, {
+      med_sid: drug.med_sid, med_id: drug.med_id,
+      tx_type: 'in', quantity: parseInt(quantity),
+      balance_before: balBefore, balance_after: balAfter,
+      lot_number, expiry_date, mfg_date, reference_no,
+      performed_by: resolvedPerformer ?? undefined, note,
+      approval_status: 'approved', source_type,
+    });
+
+    // link lot กลับไปที่ transaction
+    await client.query(
+      `UPDATE ${SCHEMA}.stock_transactions SET lot_id = $1 WHERE tx_id = $2`,
+      [newLotId, tx.tx_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({ ...tx, lot_id: newLotId, balance_after: balAfter });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    next(err);
+  } finally { client.release(); }
+}
+
 // ── GET /stock/transactions ───────────────────────────────────────────────────
 export async function getTransactions(req: Request, res: Response, next: NextFunction) {
   try {

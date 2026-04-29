@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { login, logout, me, getUsers } from '../controllers/auth.controller';
 import { getDrugs, getDrugById, getLots, createDrug, updateDrug, deleteDrug, getCategories, getMedTable } from '../controllers/drugs.controller';
-import { getTransactions, stockIn, adjustStock, returnStock, markExpired, getStockSummary, getLotsReport, getPendingStockIn, approveStockIn, rejectStockIn } from '../controllers/stock.controller';
+import { getTransactions, stockIn, receiveStock, adjustStock, returnStock, markExpired, getStockSummary, getLotsReport, getPendingStockIn, approveStockIn, rejectStockIn } from '../controllers/stock.controller';
 import { getPrescriptions, getPrescriptionById, getPrescriptionFull, createPrescription, dispensePrescription, returnPrescription, cancelPrescription, getWards, searchPatients, safetyCheck, liveSafetyCheck, createMockPrescription, updatePrescriptionItems, updatePrescriptionMeta } from '../controllers/dispense.controller';
 import { getDashboardStats, getStockSummary as getDashSummary, getAlerts, markAlertRead, markAllAlertsRead, getSettings, updateSettings } from '../controllers/dashboard.controller';
 import { getStockReport, getDispenseReport, getInventoryReport, getTopDrugs, getByCategory, getByWard, exportExcel, exportPdf } from '../controllers/reports.controller';
@@ -64,6 +64,7 @@ r.get('/stock/summary',           getStockSummary);
 r.get('/stock/lots-report',       getLotsReport);
 r.get('/stock/pending-in',        getPendingStockIn);
 r.post('/stock/in',               stockIn);
+r.post('/stock/receive',          receiveStock);
 r.post('/stock/adjust',           adjustStock);
 r.post('/stock/return',           returnStock);
 r.post('/stock/expired',          markExpired);
