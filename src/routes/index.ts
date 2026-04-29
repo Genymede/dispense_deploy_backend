@@ -71,7 +71,7 @@ r.get('/stock/summary',           getStockSummary);
 r.get('/stock/lots-report',       getLotsReport);
 r.get('/stock/pending-in',        getPendingStockIn);
 r.post('/stock/in',               stockIn);
-r.post('/stock/from-main',        requireApiKey, receiveStock);
+r.post('/stock/from-main',        receiveStock);
 r.post('/stock/adjust',           adjustStock);
 r.post('/stock/return',           returnStock);
 r.post('/stock/expired',          markExpired);
