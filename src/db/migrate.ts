@@ -219,7 +219,8 @@ const migrations: string[] = [
   // lot_id: FK กลับไปยัง lot ที่สร้างตอน approve (ใช้ trace transaction ↔ lot)
   `ALTER TABLE ${SCHEMA}.stock_transactions ADD COLUMN IF NOT EXISTS lot_id INTEGER REFERENCES ${SCHEMA}.med_stock_lots(lot_id) ON DELETE SET NULL`,
   // med_stock_lots: status สำหรับ quarantine / recalled / expired tracking
-  `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active','quarantine','recalled','expired'))`,
+  `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS status     VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active','quarantine','recalled','expired'))`,
+  `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP  DEFAULT NOW()`,
 ];
 
 async function migrate() {

@@ -174,16 +174,48 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     const drug      = drugRows[0];
     const balBefore = parseInt(drug.med_quantity);
 
-    // สร้าง lot และเพิ่มสต็อกทันที
-    const { rows: lotRows } = await client.query(
-      `INSERT INTO ${SCHEMA}.med_stock_lots
-         (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
-       VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active')
-       RETURNING lot_id`,
-      [drug.med_sid, lot_number || null, parseInt(quantity),
-       expiry_date || null, mfg_date || null, note || null]
-    );
-    const newLotId  = lotRows[0].lot_id;
+    // ── Lot deduplication: lot_number เดิม → บวกจำนวน, ใหม่ → สร้าง ────────────
+    let newLotId: number;
+    if (lot_number) {
+      const { rows: existingLot } = await client.query(
+        `SELECT lot_id FROM ${SCHEMA}.med_stock_lots
+         WHERE med_sid = $1 AND lot_number = $2 AND status = 'active'
+         LIMIT 1`,
+        [drug.med_sid, lot_number]
+      );
+      if (existingLot.length) {
+        // lot เดิม — บวกจำนวนเข้าไป
+        await client.query(
+          `UPDATE ${SCHEMA}.med_stock_lots
+           SET quantity = quantity + $1, updated_at = NOW()
+           WHERE lot_id = $2`,
+          [parseInt(quantity), existingLot[0].lot_id]
+        );
+        newLotId = existingLot[0].lot_id;
+      } else {
+        // lot ใหม่
+        const { rows: lotRows } = await client.query(
+          `INSERT INTO ${SCHEMA}.med_stock_lots
+             (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
+           VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active')
+           RETURNING lot_id`,
+          [drug.med_sid, lot_number, parseInt(quantity),
+           expiry_date || null, mfg_date || null, note || null]
+        );
+        newLotId = lotRows[0].lot_id;
+      }
+    } else {
+      // ไม่มีเลข lot — สร้างใหม่เสมอ
+      const { rows: lotRows } = await client.query(
+        `INSERT INTO ${SCHEMA}.med_stock_lots
+           (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
+         VALUES ($1, NULL, $2, $3::date, $4::date, $5, 'active')
+         RETURNING lot_id`,
+        [drug.med_sid, parseInt(quantity),
+         expiry_date || null, mfg_date || null, note || null]
+      );
+      newLotId = lotRows[0].lot_id;
+    }
     const balAfter  = await recalcTotal(drug.med_sid, client);
 
     // sync ข้อมูลจากคลังหลัก (main_item_id, drug_code, image_url) ถ้าส่งมาด้วย
