@@ -721,7 +721,8 @@ export async function createDelivery(req: Request, res: Response, next: NextFunc
     await client.query(`SET search_path TO ${SCHEMA}, public`);
 
     const { patient_id, delivery_method, receiver_name, receiver_phone,
-      address, note, status, medicine_list } = req.body;
+      address, note, status, medicine_list,
+      courier_name, courier_phone, tracking_number } = req.body;
     if (!delivery_method || !receiver_name || !receiver_phone || !address)
       throw new AppError('delivery_method, receiver_name, receiver_phone, address จำเป็น', 400);
     const resolvedPatient = await resolvePatientId(patient_id);
@@ -753,10 +754,12 @@ export async function createDelivery(req: Request, res: Response, next: NextFunc
     const { rows } = await client.query(
       `INSERT INTO ${SCHEMA}.med_delivery
          (patient_id, delivery_method, receiver_name, receiver_phone,
-          address, note, status, medicine_list, delivery_date, total_cost, prescription_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,NOW(),$9,$10) RETURNING *`,
+          address, note, status, medicine_list, delivery_date, total_cost, prescription_id,
+          courier_name, courier_phone, tracking_number)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,NOW(),$9,$10,$11,$12,$13) RETURNING *`,
       [resolvedPatient, delivery_method, receiver_name, receiver_phone,
-        address, note, status || 'Pending', JSON.stringify(medList), total_cost, prescription_id]
+        address, note, status || 'Pending', JSON.stringify(medList), total_cost, prescription_id,
+        courier_name || null, courier_phone || null, tracking_number || null]
     );
 
     await client.query('COMMIT');
@@ -774,7 +777,8 @@ export async function updateDelivery(req: Request, res: Response, next: NextFunc
     await client.query(`SET search_path TO ${SCHEMA}, public`);
 
     const { delivery_id } = req.params;
-    const { delivery_method, receiver_name, receiver_phone, address, note, status, medicine_list } = req.body;
+    const { delivery_method, receiver_name, receiver_phone, address, note, status, medicine_list,
+      courier_name, courier_phone, tracking_number } = req.body;
 
     // ── ดึง current record ────────────────────────────────────────────────────
     const { rows: current } = await client.query(
@@ -852,16 +856,21 @@ export async function updateDelivery(req: Request, res: Response, next: NextFunc
       : undefined;
     const { rows } = await client.query(
       `UPDATE ${SCHEMA}.med_delivery
-       SET delivery_method = COALESCE($1, delivery_method),
-           receiver_name   = COALESCE($2, receiver_name),
-           receiver_phone  = COALESCE($3, receiver_phone),
-           address         = COALESCE($4, address),
-           note            = COALESCE($5, note),
-           status          = COALESCE($6, status),
-           medicine_list   = COALESCE($7::jsonb, medicine_list),
-           total_cost      = COALESCE($9, total_cost)
+       SET delivery_method  = COALESCE($1, delivery_method),
+           receiver_name    = COALESCE($2, receiver_name),
+           receiver_phone   = COALESCE($3, receiver_phone),
+           address          = COALESCE($4, address),
+           note             = COALESCE($5, note),
+           status           = COALESCE($6, status),
+           medicine_list    = COALESCE($7::jsonb, medicine_list),
+           total_cost       = COALESCE($9, total_cost),
+           courier_name     = COALESCE($10, courier_name),
+           courier_phone    = COALESCE($11, courier_phone),
+           tracking_number  = COALESCE($12, tracking_number),
+           delivered_at     = CASE WHEN $6 = 'Delivered' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END
        WHERE delivery_id = $8 RETURNING *`,
-      [delivery_method, receiver_name, receiver_phone, address, note, status, medList ?? null, delivery_id, total_cost ?? null]
+      [delivery_method, receiver_name, receiver_phone, address, note, status, medList ?? null, delivery_id, total_cost ?? null,
+       courier_name ?? null, courier_phone ?? null, tracking_number ?? null]
     );
 
     await client.query('COMMIT');

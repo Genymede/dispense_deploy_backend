@@ -197,6 +197,12 @@ const migrations: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_queue_patient      ON ${SCHEMA}.queue_entries(patient_id)`,
   `CREATE INDEX IF NOT EXISTS idx_rx_status_created  ON ${SCHEMA}.prescriptions(status, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_rx_items_med_sid   ON ${SCHEMA}.prescription_items(med_sid)`,
+
+  // med_delivery: ข้อมูลผู้จัดส่งยา
+  `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS courier_name    TEXT`,
+  `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS courier_phone   TEXT`,
+  `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS tracking_number TEXT`,
+  `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS delivered_at    TIMESTAMPTZ`,
 ];
 
 async function migrate() {
