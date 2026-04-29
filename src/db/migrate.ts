@@ -72,7 +72,7 @@ const migrations: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_stock_tx_med_sid  ON ${SCHEMA}.stock_transactions(med_sid)`,
   `CREATE INDEX IF NOT EXISTS idx_stock_tx_type     ON ${SCHEMA}.stock_transactions(tx_type)`,
   `CREATE INDEX IF NOT EXISTS idx_stock_tx_created  ON ${SCHEMA}.stock_transactions(created_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_stock_tx_date     ON ${SCHEMA}.stock_transactions(DATE(created_at), tx_type)`,
+  `CREATE INDEX IF NOT EXISTS idx_stock_tx_date     ON ${SCHEMA}.stock_transactions(created_at, tx_type)`,
   `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS diagnosis TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_rx_status         ON ${SCHEMA}.prescriptions(status)`,
   `CREATE INDEX IF NOT EXISTS idx_rx_patient        ON ${SCHEMA}.prescriptions(patient_id)`,
@@ -87,11 +87,11 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.med_delivery ALTER COLUMN doctor_id DROP DEFAULT`,
   `ALTER TABLE ${SCHEMA}.med_delivery ALTER COLUMN doctor_id DROP NOT NULL`,
 
-  // med_delivery: NULL out existing rows where doctor_id references a non-existent user
+  // med_delivery: NULL out existing rows where doctor_id references a non-existent auth user
   `UPDATE ${SCHEMA}.med_delivery
    SET doctor_id = NULL
    WHERE doctor_id IS NOT NULL
-     AND NOT EXISTS (SELECT 1 FROM ${SCHEMA}.users u WHERE u.uid = med_delivery.doctor_id)`,
+     AND NOT EXISTS (SELECT 1 FROM auth.users u WHERE u.id = med_delivery.doctor_id)`,
 
   // system_settings
   `CREATE TABLE IF NOT EXISTS ${SCHEMA}.system_settings (
