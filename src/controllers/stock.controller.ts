@@ -103,6 +103,8 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
       med_sid, quantity, lot_number, expiry_date, mfg_date,
       reference_no, performed_by, note,
       source_type = 'main_warehouse',
+      drug_code,   // items.code จากคลังหลัก
+      image_url,   // items.image_url จากคลังหลัก
     } = req.body;
 
     if (!med_sid || !quantity || quantity <= 0)
@@ -139,9 +141,16 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     );
     const newLotId  = lotRows[0].lot_id;
     const balAfter  = await recalcTotal(drug.med_sid, client);
+
+    // sync ข้อมูลจากคลังหลัก (drug_code, image_url) ถ้าส่งมาด้วย
+    const syncFields: string[] = ['is_expired = false'];
+    const syncParams: any[]    = [];
+    if (drug_code) { syncParams.push(drug_code);  syncFields.push(`drug_code = $${syncParams.length}`); }
+    if (image_url) { syncParams.push(image_url);  syncFields.push(`image_url = $${syncParams.length}`); }
+    syncParams.push(drug.med_sid);
     await client.query(
-      `UPDATE ${SCHEMA}.med_subwarehouse SET is_expired = false WHERE med_sid = $1`,
-      [drug.med_sid]
+      `UPDATE ${SCHEMA}.med_subwarehouse SET ${syncFields.join(', ')} WHERE med_sid = $${syncParams.length}`,
+      syncParams
     );
 
     const tx = await recordTx(client, {
