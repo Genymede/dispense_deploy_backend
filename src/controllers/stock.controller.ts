@@ -100,12 +100,15 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     await client.query(`SET search_path TO ${SCHEMA}, public`);
 
     const {
-      med_sid, item_id,             // item_id = UUID จากคลังหลัก (ใช้แทน med_sid ได้)
+      med_sid, item_id,
       quantity, lot_number, expiry_date, mfg_date,
       reference_no, performed_by, note,
       source_type = 'main_warehouse',
-      drug_code,   // items.code จากคลังหลัก
-      image_url,   // items.image_url จากคลังหลัก
+      drug_code, image_url,
+      // fields สำหรับ auto-create ยาใหม่ (ใช้เฉพาะเมื่อไม่เจอยาในระบบ)
+      med_name, med_generic_name, med_counting_unit,
+      med_medical_category, packaging_type,
+      min_quantity: min_qty, max_quantity: max_qty,
     } = req.body;
 
     if (!med_sid && !item_id)
@@ -124,14 +127,49 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
       ? await resolveUserId(performed_by)
       : ((req as any).currentUser?.id ?? null);
 
-    // lookup ด้วย item_id (UUID จากคลังหลัก) หรือ med_sid ตามปกติ
+    // lookup ด้วย item_id หรือ med_sid
     const lookupCol = item_id ? 'main_item_id' : 'med_sid';
     const lookupVal = item_id ?? med_sid;
-    const { rows: drugRows } = await client.query(
+    let { rows: drugRows } = await client.query(
       `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE ${lookupCol} = $1 FOR UPDATE`,
       [lookupVal]
     );
-    if (!drugRows.length) throw new AppError('ไม่พบยาใน subwarehouse (ตรวจสอบ med_sid หรือ item_id)', 404);
+
+    // ── Auto-create: ยาไม่มีในระบบ → สร้างอัตโนมัติจากข้อมูลที่ส่งมา ──────────
+    if (!drugRows.length) {
+      if (!med_name) throw new AppError('ไม่พบยาในระบบ — กรุณาส่ง med_name เพื่อสร้างยาใหม่อัตโนมัติ', 404);
+
+      // หา med_id จาก med_table (ถ้าไม่มีให้สร้างใหม่)
+      const { rows: mtRows } = await client.query(
+        `SELECT med_id FROM ${SCHEMA}.med_table WHERE med_name = $1 LIMIT 1`,
+        [med_name]
+      );
+      let medId: number;
+      if (mtRows.length) {
+        medId = mtRows[0].med_id;
+      } else {
+        const { rows: newMt } = await client.query(
+          `INSERT INTO ${SCHEMA}.med_table
+             (med_name, med_generic_name, med_counting_unit, med_medical_category)
+           VALUES ($1, $2, $3, $4) RETURNING med_id`,
+          [med_name, med_generic_name || null,
+           med_counting_unit || 'หน่วย', med_medical_category || null]
+        );
+        medId = newMt[0].med_id;
+      }
+
+      // สร้าง med_subwarehouse entry ใหม่
+      const { rows: newSub } = await client.query(
+        `INSERT INTO ${SCHEMA}.med_subwarehouse
+           (med_id, main_item_id, drug_code, image_url,
+            packaging_type, min_quantity, max_quantity, med_quantity)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
+         RETURNING med_sid, med_id, med_quantity`,
+        [medId, item_id || null, drug_code || null, image_url || null,
+         packaging_type || null, min_qty || null, max_qty || null]
+      );
+      drugRows = newSub;
+    }
 
     const drug      = drugRows[0];
     const balBefore = parseInt(drug.med_quantity);
