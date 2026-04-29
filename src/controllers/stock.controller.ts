@@ -136,6 +136,7 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     );
 
     // ── Auto-create: ยาไม่มีในระบบ → สร้างอัตโนมัติจากข้อมูลที่ส่งมา ──────────
+    let wasAutoCreated = false;
     if (!drugRows.length) {
       if (!med_name) throw new AppError('ไม่พบยาในระบบ — กรุณาส่ง med_name เพื่อสร้างยาใหม่อัตโนมัติ', 404);
 
@@ -169,6 +170,7 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
          packaging_type || null, min_qty || null, max_qty || null]
       );
       drugRows = newSub;
+      wasAutoCreated = true;
     }
 
     const drug      = drugRows[0];
@@ -246,7 +248,7 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     );
 
     await client.query('COMMIT');
-    res.status(201).json({ ...tx, lot_id: newLotId, balance_after: balAfter });
+    res.status(201).json({ ...tx, lot_id: newLotId, balance_after: balAfter, auto_created: wasAutoCreated, new_med_sid: wasAutoCreated ? drug.med_sid : undefined });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) {}
     next(err);
