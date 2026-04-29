@@ -222,10 +222,8 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS status     VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active','quarantine','recalled','expired'))`,
   `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP  DEFAULT NOW()`,
 
-  // alert_log: ขยาย alert_type ให้รองรับ incomplete_record
-  `ALTER TABLE ${SCHEMA}.alert_log DROP CONSTRAINT IF EXISTS alert_log_alert_type_check`,
-  `ALTER TABLE ${SCHEMA}.alert_log ADD CONSTRAINT alert_log_alert_type_check
-     CHECK (alert_type IN ('low_stock','near_expiry','expired','overstock','incomplete_record'))`,
+  // alert_log: ขยาย ENUM alert_type_enum ให้รองรับ incomplete_record
+  `ALTER TYPE ${SCHEMA}.alert_type_enum ADD VALUE IF NOT EXISTS 'incomplete_record'`,
 ];
 
 async function migrate() {
