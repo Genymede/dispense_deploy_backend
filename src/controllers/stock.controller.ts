@@ -100,15 +100,18 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     await client.query(`SET search_path TO ${SCHEMA}, public`);
 
     const {
-      med_sid, quantity, lot_number, expiry_date, mfg_date,
+      med_sid, item_id,             // item_id = UUID จากคลังหลัก (ใช้แทน med_sid ได้)
+      quantity, lot_number, expiry_date, mfg_date,
       reference_no, performed_by, note,
       source_type = 'main_warehouse',
       drug_code,   // items.code จากคลังหลัก
       image_url,   // items.image_url จากคลังหลัก
     } = req.body;
 
-    if (!med_sid || !quantity || quantity <= 0)
-      throw new AppError('med_sid และ quantity (>0) จำเป็น', 400);
+    if (!med_sid && !item_id)
+      throw new AppError('ต้องระบุ med_sid หรือ item_id อย่างใดอย่างหนึ่ง', 400);
+    if (!quantity || quantity <= 0)
+      throw new AppError('quantity (>0) จำเป็น', 400);
 
     if (expiry_date) {
       const exp = new Date(expiry_date);
@@ -121,11 +124,14 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
       ? await resolveUserId(performed_by)
       : ((req as any).currentUser?.id ?? null);
 
+    // lookup ด้วย item_id (UUID จากคลังหลัก) หรือ med_sid ตามปกติ
+    const lookupCol = item_id ? 'main_item_id' : 'med_sid';
+    const lookupVal = item_id ?? med_sid;
     const { rows: drugRows } = await client.query(
-      `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_sid = $1 FOR UPDATE`,
-      [med_sid]
+      `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE ${lookupCol} = $1 FOR UPDATE`,
+      [lookupVal]
     );
-    if (!drugRows.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
+    if (!drugRows.length) throw new AppError('ไม่พบยาใน subwarehouse (ตรวจสอบ med_sid หรือ item_id)', 404);
 
     const drug      = drugRows[0];
     const balBefore = parseInt(drug.med_quantity);
@@ -142,9 +148,10 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
     const newLotId  = lotRows[0].lot_id;
     const balAfter  = await recalcTotal(drug.med_sid, client);
 
-    // sync ข้อมูลจากคลังหลัก (drug_code, image_url) ถ้าส่งมาด้วย
+    // sync ข้อมูลจากคลังหลัก (main_item_id, drug_code, image_url) ถ้าส่งมาด้วย
     const syncFields: string[] = ['is_expired = false'];
     const syncParams: any[]    = [];
+    if (item_id)   { syncParams.push(item_id);   syncFields.push(`main_item_id = $${syncParams.length}`); }
     if (drug_code) { syncParams.push(drug_code);  syncFields.push(`drug_code = $${syncParams.length}`); }
     if (image_url) { syncParams.push(image_url);  syncFields.push(`image_url = $${syncParams.length}`); }
     syncParams.push(drug.med_sid);

@@ -205,8 +205,11 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.med_delivery ADD COLUMN IF NOT EXISTS delivered_at    TIMESTAMPTZ`,
 
   // ── med_subwarehouse: เพิ่มคอลัมน์ให้ครบเหมือน inventory.items ──────────────
-  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS drug_code VARCHAR(50)`,
-  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS image_url  TEXT`,
+  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS drug_code     VARCHAR(50)`,
+  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS image_url     TEXT`,
+  // main_item_id = inventory.items.id (UUID) — bridge ระหว่างคลังหลักกับคลังย่อย
+  `ALTER TABLE ${SCHEMA}.med_subwarehouse ADD COLUMN IF NOT EXISTS main_item_id  UUID`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_main_item_id ON ${SCHEMA}.med_subwarehouse(main_item_id) WHERE main_item_id IS NOT NULL`,
 
   // ── stock requisition: เพิ่มคอลัมน์สำหรับรับยาจากคลังหลัก ─────────────────
   // source_type: ระบุแหล่งที่มา เช่น 'main_warehouse', 'supplier', 'adjust'
