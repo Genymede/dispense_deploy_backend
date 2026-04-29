@@ -1,25 +1,50 @@
 import { Request, Response, NextFunction } from 'express';
 import { query, pool, SCHEMA } from '../db/pool';
 
+// ── Ward → queue prefix mapping ───────────────────────────────────────────────
+const WARD_PREFIX_MAP: Record<string, string> = {
+  OPD: 'O', IPD: 'I', ER: 'E', ICU: 'C', OR: 'R', ANC: 'N', LR: 'L',
+};
+
+function wardToPrefix(ward?: string | null): string {
+  if (!ward) return 'A';
+  const w = ward.trim().toUpperCase();
+  for (const [key, prefix] of Object.entries(WARD_PREFIX_MAP)) {
+    if (w === key || w.startsWith(key)) return prefix;
+  }
+  const first = w[0];
+  return /^[A-Z]$/.test(first) ? first : 'A';
+}
+
 // ── Helper: atomic queue number increment ─────────────────────────────────────
-// Returns formatted queue number e.g. "A001". Must be called inside a transaction.
-export async function nextQueueNumber(client: any): Promise<string> {
+// Returns formatted queue number e.g. "O001". Must be called inside a transaction.
+export async function nextQueueNumber(client: any, ward?: string | null): Promise<string> {
+  const prefix = wardToPrefix(ward);
+  const key = `queue_current_number_${prefix}`;
   const { rows } = await client.query(
-    `UPDATE ${SCHEMA}.system_settings
-     SET value = (value::int + 1)::text, updated_at = NOW()
-     WHERE key = 'queue_current_number'
-     RETURNING value::int AS num`
+    `INSERT INTO ${SCHEMA}.system_settings (key, value)
+     VALUES ($1, '1')
+     ON CONFLICT (key) DO UPDATE
+     SET value = (${SCHEMA}.system_settings.value::int + 1)::text, updated_at = NOW()
+     RETURNING value::int AS num`,
+    [key]
   );
   const num = rows[0]?.num ?? 1;
-  return `A${String(num).padStart(3, '0')}`;
+  return `${prefix}${String(num).padStart(3, '0')}`;
 }
 
 // ── GET /queue ────────────────────────────────────────────────────────────────
 export async function getQueue(req: Request, res: Response, next: NextFunction) {
   try {
-    const { status } = req.query;
-    let where = `DATE(qe.created_at) = CURRENT_DATE`;
+    const { status, date } = req.query;
     const params: any[] = [];
+    let where: string;
+    if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      params.push(date);
+      where = `DATE(qe.created_at AT TIME ZONE 'Asia/Bangkok') = $${params.length}`;
+    } else {
+      where = `DATE(qe.created_at AT TIME ZONE 'Asia/Bangkok') = CURRENT_DATE`;
+    }
     if (status) {
       params.push(status);
       where += ` AND qe.status = $${params.length}`;

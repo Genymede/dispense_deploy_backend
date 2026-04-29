@@ -325,7 +325,7 @@ export async function dispensePrescription(req: Request, res: Response, next: Ne
           queue_id    = existingQ[0].queue_id;
           queue_number = existingQ[0].queue_number;
         } else {
-          queue_number = await nextQueueNumber(client);
+          queue_number = await nextQueueNumber(client, rx.ward);
           const { rows: newQ } = await client.query(
             `INSERT INTO ${SCHEMA}.queue_entries (queue_number, patient_id, note)
              VALUES ($1, $2, $3) RETURNING queue_id`,
