@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { login, logout, me, getUsers } from '../controllers/auth.controller';
+import { login, logout, me, getUsers, updateMe } from '../controllers/auth.controller';
 import { getDrugs, getDrugById, getLots, createDrug, updateDrug, deleteDrug, getCategories, getMedTable } from '../controllers/drugs.controller';
 import { getTransactions, stockIn, receiveStock, adjustStock, returnStock, markExpired, getStockSummary, getLotsReport, getPendingStockIn, approveStockIn, rejectStockIn } from '../controllers/stock.controller';
 import { getPrescriptions, getPrescriptionById, getPrescriptionFull, createPrescription, dispensePrescription, returnPrescription, cancelPrescription, getWards, searchPatients, safetyCheck, liveSafetyCheck, createMockPrescription, updatePrescriptionItems, updatePrescriptionMeta } from '../controllers/dispense.controller';
@@ -51,6 +51,7 @@ r.get('/printers',  getPrinters);
 r.post('/auth/login',    login);
 r.post('/auth/logout',   logout);
 r.get('/auth/me',        me);
+r.put('/auth/me',        updateMe);
 r.get('/auth/users',     getUsers);
 
 // ── Health ─────────────────────────────────────────────────────────────────────

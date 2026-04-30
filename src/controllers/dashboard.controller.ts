@@ -125,80 +125,114 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
     const { is_read, type } = req.query;
 
     const { rows: settingRows } = await query(
-      `SELECT value FROM ${SCHEMA}.system_settings WHERE key='near_expiry_days'`
+      `SELECT key, value FROM ${SCHEMA}.system_settings
+       WHERE key IN ('near_expiry_days','alert_enabled_low_stock','alert_enabled_near_expiry',
+                     'alert_enabled_expired','alert_enabled_overstock','alert_enabled_new_drug')`
     );
-    const nearExpiryDays = parseInt(settingRows[0]?.value ?? '30');
+    const settingMap: Record<string, string> = {};
+    for (const r of settingRows) settingMap[r.key] = r.value;
+
+    const nearExpiryDays = parseInt(settingMap['near_expiry_days'] ?? '30');
+    const enabled = (key: string, def = true) =>
+      settingMap[key] !== undefined ? settingMap[key] === 'true' : def;
 
     const liveAlerts: any[] = [];
 
     // Low stock
-    const { rows: lowRows } = await query(
-      `SELECT
-         ms.med_sid, ms.med_quantity, ms.min_quantity,
-         COALESCE(ms.med_showname, mt.med_name) AS drug_name
-       FROM ${SCHEMA}.med_subwarehouse ms
-       JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-       WHERE ms.med_quantity > 0
-         AND ms.min_quantity IS NOT NULL
-         AND ms.med_quantity < ms.min_quantity
-         AND ms.is_expired = false
-       ORDER BY (ms.med_quantity::float / NULLIF(ms.min_quantity,0)) ASC
-       LIMIT 50`
-    );
-    for (const r of lowRows) {
-      liveAlerts.push({
-        alert_type: 'low_stock',
-        med_sid: r.med_sid,
-        drug_name: r.drug_name,
-        message: `สต็อกเหลือ ${r.med_quantity} หน่วย (ขั้นต่ำ ${r.min_quantity})`,
-        severity: r.med_quantity < r.min_quantity * 0.5 ? 'critical' : 'warning',
-      });
+    if (enabled('alert_enabled_low_stock')) {
+      const { rows: lowRows } = await query(
+        `SELECT
+           ms.med_sid, ms.med_quantity, ms.min_quantity,
+           COALESCE(ms.med_showname, mt.med_name) AS drug_name
+         FROM ${SCHEMA}.med_subwarehouse ms
+         JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+         WHERE ms.med_quantity > 0
+           AND ms.min_quantity IS NOT NULL
+           AND ms.med_quantity < ms.min_quantity
+           AND ms.is_expired = false
+         ORDER BY (ms.med_quantity::float / NULLIF(ms.min_quantity,0)) ASC
+         LIMIT 50`
+      );
+      for (const r of lowRows) {
+        liveAlerts.push({
+          alert_type: 'low_stock',
+          med_sid: r.med_sid,
+          drug_name: r.drug_name,
+          message: `สต็อกเหลือ ${r.med_quantity} หน่วย (ขั้นต่ำ ${r.min_quantity})`,
+          severity: r.med_quantity < r.min_quantity * 0.5 ? 'critical' : 'warning',
+        });
+      }
     }
 
     // Near expiry
-    const { rows: nearRows } = await query(
-      `SELECT
-         ms.med_sid, ms.exp_date,
-         COALESCE(ms.med_showname, mt.med_name) AS drug_name,
-         (ms.exp_date::date - CURRENT_DATE) AS days_left
-       FROM ${SCHEMA}.med_subwarehouse ms
-       JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-       WHERE ms.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
-         AND ms.is_expired = false AND ms.med_quantity > 0
-       ORDER BY ms.exp_date ASC
-       LIMIT 50`,
-      [nearExpiryDays]
-    );
-    for (const r of nearRows) {
-      liveAlerts.push({
-        alert_type: 'near_expiry',
-        med_sid: r.med_sid,
-        drug_name: r.drug_name,
-        message: `ยาจะหมดอายุใน ${r.days_left} วัน (${new Date(r.exp_date).toLocaleDateString('th-TH')})`,
-        severity: r.days_left <= 7 ? 'critical' : 'warning',
-      });
+    if (enabled('alert_enabled_near_expiry')) {
+      const { rows: nearRows } = await query(
+        `SELECT
+           ms.med_sid, ms.exp_date,
+           COALESCE(ms.med_showname, mt.med_name) AS drug_name,
+           (ms.exp_date::date - CURRENT_DATE) AS days_left
+         FROM ${SCHEMA}.med_subwarehouse ms
+         JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+         WHERE ms.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
+           AND ms.is_expired = false AND ms.med_quantity > 0
+         ORDER BY ms.exp_date ASC
+         LIMIT 50`,
+        [nearExpiryDays]
+      );
+      for (const r of nearRows) {
+        liveAlerts.push({
+          alert_type: 'near_expiry',
+          med_sid: r.med_sid,
+          drug_name: r.drug_name,
+          message: `ยาจะหมดอายุใน ${r.days_left} วัน (${new Date(r.exp_date).toLocaleDateString('th-TH')})`,
+          severity: r.days_left <= 7 ? 'critical' : 'warning',
+        });
+      }
     }
 
     // Expired
-    const { rows: expRows } = await query(
-      `SELECT
-         ms.med_sid, ms.exp_date, ms.med_quantity,
-         COALESCE(ms.med_showname, mt.med_name) AS drug_name
-       FROM ${SCHEMA}.med_subwarehouse ms
-       JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-       WHERE (ms.is_expired = true OR ms.exp_date < NOW())
-         AND ms.med_quantity > 0
-       ORDER BY ms.exp_date ASC
-       LIMIT 50`
-    );
-    for (const r of expRows) {
-      liveAlerts.push({
-        alert_type: 'expired',
-        med_sid: r.med_sid,
-        drug_name: r.drug_name,
-        message: `ยาหมดอายุแล้ว คงเหลือ ${r.med_quantity} หน่วย`,
-        severity: 'critical',
-      });
+    if (enabled('alert_enabled_expired')) {
+      const { rows: expRows } = await query(
+        `SELECT
+           ms.med_sid, ms.exp_date, ms.med_quantity,
+           COALESCE(ms.med_showname, mt.med_name) AS drug_name
+         FROM ${SCHEMA}.med_subwarehouse ms
+         JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+         WHERE (ms.is_expired = true OR ms.exp_date < NOW())
+           AND ms.med_quantity > 0
+         ORDER BY ms.exp_date ASC
+         LIMIT 50`
+      );
+      for (const r of expRows) {
+        liveAlerts.push({
+          alert_type: 'expired',
+          med_sid: r.med_sid,
+          drug_name: r.drug_name,
+          message: `ยาหมดอายุแล้ว คงเหลือ ${r.med_quantity} หน่วย`,
+          severity: 'critical',
+        });
+      }
+    }
+
+    // New drug (added within last 7 days)
+    if (enabled('alert_enabled_new_drug')) {
+      const { rows: newRows } = await query(
+        `SELECT ms.med_sid, COALESCE(ms.med_showname, mt.med_name) AS drug_name, ms.created_at
+         FROM ${SCHEMA}.med_subwarehouse ms
+         JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+         WHERE ms.created_at >= NOW() - INTERVAL '7 days'
+         ORDER BY ms.created_at DESC
+         LIMIT 30`
+      );
+      for (const r of newRows) {
+        liveAlerts.push({
+          alert_type: 'new_drug',
+          med_sid: r.med_sid,
+          drug_name: r.drug_name,
+          message: `ยาใหม่เพิ่มเข้าคลังเมื่อ ${new Date(r.created_at).toLocaleDateString('th-TH')}`,
+          severity: 'warning',
+        });
+      }
     }
 
     // Incomplete drug records

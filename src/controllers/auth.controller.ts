@@ -182,6 +182,28 @@ export async function getUsers(req: Request, res: Response, next: NextFunction) 
   } catch (err) { next(err); }
 }
 
+// ── PUT /auth/me — อัปเดต profile ผู้ใช้ที่ login อยู่ ────────────────────────
+export async function updateMe(req: Request, res: Response, next: NextFunction) {
+  try {
+    const currentUser = (req as any).currentUser;
+    if (!currentUser?.id) throw new AppError('ไม่ได้เข้าสู่ระบบ', 401);
+
+    const { firstname_th, lastname_th, firstname_en, lastname_en } = req.body;
+
+    await query(
+      `UPDATE public.profiles
+       SET firstname_th = COALESCE($1, firstname_th),
+           lastname_th  = COALESCE($2, lastname_th),
+           firstname_en = COALESCE($3, firstname_en),
+           lastname_en  = COALESCE($4, lastname_en)
+       WHERE id = $5`,
+      [firstname_th ?? null, lastname_th ?? null, firstname_en ?? null, lastname_en ?? null, currentUser.id]
+    );
+
+    res.json({ message: 'อัปเดตข้อมูลเรียบร้อย' });
+  } catch (err) { next(err); }
+}
+
 // ── middleware: ถอด JWT โดยตรง ไม่ upsert DB ─────────────────────────────────
 export async function verifyToken(req: Request, res: Response, next: NextFunction) {
   try {
