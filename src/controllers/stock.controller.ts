@@ -167,7 +167,7 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
          VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
          RETURNING med_sid, med_id, med_quantity`,
         [medId, item_id || null, drug_code || null, image_url || null,
-         packaging_type || null, min_qty || null, max_qty || null]
+         packaging_type || 'เม็ด', min_qty || null, max_qty || null]
       );
       drugRows = newSub;
       wasAutoCreated = true;
