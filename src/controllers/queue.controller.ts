@@ -25,7 +25,7 @@ export async function nextQueueNumber(client: any, ward?: string | null): Promis
     `INSERT INTO ${SCHEMA}.system_settings (key, value)
      VALUES ($1, '1')
      ON CONFLICT (key) DO UPDATE
-     SET value = (${SCHEMA}.system_settings.value::int + 1)::text, updated_at = NOW()
+     SET value = (system_settings.value::int + 1)::text, updated_at = NOW()
      RETURNING value::int AS num`,
     [key]
   );
