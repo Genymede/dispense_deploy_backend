@@ -1105,7 +1105,8 @@ export async function getMedProblems(req: Request, res: Response, next: NextFunc
               CONCAT(pa.first_name, ' ', pa.last_name) AS patient_name, pa.hn_number
        FROM ${SCHEMA}.med_problem mp
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = mp.med_id
-       LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = mp.patient_id
+       LEFT JOIN ${SCHEMA}.med_usage mu ON mu.usage_id = mp.usage_id
+       LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = mu.patient_id
        LEFT JOIN public.profiles pu ON pu.id = mp.reported_by
        LEFT JOIN auth.users     au ON au.id = mp.reported_by
        ${w} ORDER BY mp.reported_at DESC NULLS LAST
@@ -1115,7 +1116,8 @@ export async function getMedProblems(req: Request, res: Response, next: NextFunc
     const cr = await query(
       `SELECT COUNT(*) AS total FROM ${SCHEMA}.med_problem mp
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = mp.med_id
-       LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = mp.patient_id
+       LEFT JOIN ${SCHEMA}.med_usage mu ON mu.usage_id = mp.usage_id
+       LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = mu.patient_id
        ${w}`, params
     );
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
@@ -1124,16 +1126,16 @@ export async function getMedProblems(req: Request, res: Response, next: NextFunc
 
 export async function createMedProblem(req: Request, res: Response, next: NextFunction) {
   try {
-    const { med_id, patient_id, problem_type, description, is_resolved, reported_by, reported_at } = req.body;
+    const { med_id, usage_id, problem_type, description, is_resolved, reported_by, reported_at } = req.body;
     if (!med_id)       throw new AppError('กรุณาเลือกยา', 400);
     if (!problem_type) throw new AppError('กรุณาระบุประเภทปัญหา', 400);
     if (!description)  throw new AppError('กรุณากรอกคำอธิบาย', 400);
     const resolvedBy = reported_by ? await resolveUserId(reported_by) : null;
     const { rows } = await query(
       `INSERT INTO ${SCHEMA}.med_problem
-         (med_id, patient_id, problem_type, description, is_resolved, reported_by, reported_at)
+         (med_id, usage_id, problem_type, description, is_resolved, reported_by, reported_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [med_id, patient_id || null, problem_type, description,
+      [med_id, usage_id || null, problem_type, description,
        is_resolved ?? false, resolvedBy, reported_at || new Date()]
     );
     res.status(201).json(rows[0]);
@@ -1143,19 +1145,19 @@ export async function createMedProblem(req: Request, res: Response, next: NextFu
 export async function updateMedProblem(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
-    const { med_id, patient_id, problem_type, description, is_resolved, reported_by, reported_at } = req.body;
+    const { med_id, usage_id, problem_type, description, is_resolved, reported_by, reported_at } = req.body;
     const resolvedBy = reported_by ? await resolveUserId(reported_by) : null;
     const { rows } = await query(
       `UPDATE ${SCHEMA}.med_problem SET
          med_id       = COALESCE($1, med_id),
-         patient_id   = COALESCE($2, patient_id),
+         usage_id     = COALESCE($2, usage_id),
          problem_type = COALESCE($3, problem_type),
          description  = COALESCE($4, description),
          is_resolved  = COALESCE($5, is_resolved),
          reported_by  = COALESCE($6, reported_by),
          reported_at  = COALESCE($7, reported_at)
-       WHERE problem_id = $8 RETURNING *`,
-      [med_id, patient_id || null, problem_type, description,
+       WHERE mp_id = $8 RETURNING *`,
+      [med_id, usage_id || null, problem_type, description,
        is_resolved, resolvedBy, reported_at, id]
     );
     if (!rows.length) throw new AppError('ไม่พบรายการ', 404);
@@ -1167,7 +1169,7 @@ export async function deleteMedProblem(req: Request, res: Response, next: NextFu
   try {
     const { id } = req.params;
     const { rowCount } = await query(
-      `DELETE FROM ${SCHEMA}.med_problem WHERE problem_id = $1`, [id]
+      `DELETE FROM ${SCHEMA}.med_problem WHERE mp_id = $1`, [id]
     );
     if (!rowCount) throw new AppError('ไม่พบรายการ', 404);
     res.json({ message: 'ลบเรียบร้อย' });
