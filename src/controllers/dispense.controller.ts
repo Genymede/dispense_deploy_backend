@@ -684,6 +684,18 @@ export async function createMockPrescription(req: Request, res: Response, next: 
     );
     if (!drugs.length) throw new AppError('ไม่พบยาในคลัง กรุณา seed ข้อมูลก่อน', 400);
 
+    // Auto-reset per-prefix counters เมื่อยังไม่มีคิววันนี้ (เหมือน createQueue)
+    await client.query(
+      `UPDATE ${SCHEMA}.system_settings
+       SET value = '0', updated_at = NOW()
+       WHERE key LIKE 'queue_current_number_%'
+         AND NOT EXISTS (
+           SELECT 1 FROM ${SCHEMA}.queue_entries
+           WHERE DATE(created_at AT TIME ZONE 'Asia/Bangkok')
+               = (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+         )`
+    );
+
     const wards = ['OPD', 'IPD', 'ER', 'ICU', 'หอผู้ป่วยชาย', 'หอผู้ป่วยหญิง', 'กุมารเวช', 'สูตินรีเวช'];
     const created = [];
 
@@ -728,12 +740,34 @@ export async function createMockPrescription(req: Request, res: Response, next: 
         );
       }
 
-      // สร้าง queue entry — จำลองการลงทะเบียนรับบัตรคิวตั้งแต่ต้น
-      const queueNumber = await nextQueueNumber(client, rx.ward);
-      const { rows: qRows } = await client.query(
-        `INSERT INTO ${SCHEMA}.queue_entries (queue_number, patient_id, note)
-         VALUES ($1, $2, $3) RETURNING queue_id`,
-        [queueNumber, patient.patient_id, `ใบสั่งยา ${rx_no}`]
+      // สร้าง queue entry — ใช้คิวเดิมถ้ามีอยู่แล้ว (waiting/called วันนี้)
+      const { rows: existingQ } = await client.query(
+        `SELECT queue_id, queue_number FROM ${SCHEMA}.queue_entries
+         WHERE patient_id = $1 AND status IN ('waiting','called')
+           AND DATE(created_at AT TIME ZONE 'Asia/Bangkok') = (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+         ORDER BY queue_id ASC LIMIT 1`,
+        [patient.patient_id]
+      );
+
+      let queueNumber: string;
+      let queue_id: number;
+      if (existingQ.length) {
+        queueNumber = existingQ[0].queue_number;
+        queue_id    = existingQ[0].queue_id;
+      } else {
+        queueNumber = await nextQueueNumber(client, rx.ward);
+        const { rows: qRows } = await client.query(
+          `INSERT INTO ${SCHEMA}.queue_entries (queue_number, patient_id, note)
+           VALUES ($1, $2, $3) RETURNING queue_id`,
+          [queueNumber, patient.patient_id, `ใบสั่งยา ${rx_no}`]
+        );
+        queue_id = qRows[0].queue_id;
+      }
+
+      // บันทึก queue_number ลง prescriptions เพื่อแสดงย้อนหลัง
+      await client.query(
+        `UPDATE ${SCHEMA}.prescriptions SET queue_number = $1 WHERE prescription_id = $2`,
+        [queueNumber, rx.prescription_id]
       );
 
       created.push({
@@ -745,7 +779,7 @@ export async function createMockPrescription(req: Request, res: Response, next: 
         item_count: picked.length,
         drugs: picked.map((d: any) => d.med_showname || d.med_name),
         queue_number: queueNumber,
-        queue_id: qRows[0].queue_id,
+        queue_id,
       });
     }
 

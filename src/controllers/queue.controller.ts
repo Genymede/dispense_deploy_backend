@@ -197,9 +197,9 @@ export async function createQueue(req: Request, res: Response, next: NextFunctio
 // ── POST /queue/reset ─────────────────────────────────────────────────────────
 export async function resetQueue(req: Request, res: Response, next: NextFunction) {
   try {
-    // Reset counter
+    // Reset all per-prefix counters (key pattern: queue_current_number_X)
     await query(
-      `UPDATE ${SCHEMA}.system_settings SET value = '0', updated_at = NOW() WHERE key = 'queue_current_number'`
+      `UPDATE ${SCHEMA}.system_settings SET value = '0', updated_at = NOW() WHERE key LIKE 'queue_current_number_%'`
     );
     // Delete today's non-completed entries (waiting + called)
     const { rows } = await query(
