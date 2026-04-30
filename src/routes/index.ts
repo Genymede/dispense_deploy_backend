@@ -19,6 +19,7 @@ import {
   createDelivery, updateDelivery, deleteDelivery,
   createOverdue, updateOverdue, deleteOverdue,
   getPatients, getPatientById,
+  getMedProblems, createMedProblem, updateMedProblem, deleteMedProblem,
 } from '../controllers/registry.controller';
 import {
   reportMedTable, reportMedSubwarehouse, reportMedExpired,
@@ -185,6 +186,11 @@ r.get('/registry/rad',                 getRadRegistry);
 r.post('/registry/rad',                createRadRequest);
 r.put('/registry/rad/:rad_id',     updateRadRequest);
 r.delete('/registry/rad/:rad_id',  deleteRadRequest);
+
+r.get('/registry/med-problem',             getMedProblems);
+r.post('/registry/med-problem',            createMedProblem);
+r.put('/registry/med-problem/:id',         updateMedProblem);
+r.delete('/registry/med-problem/:id',      deleteMedProblem);
 
 // ── Patients ───────────────────────────────────────────────────────────────────
 r.get('/patients',     getPatients);
