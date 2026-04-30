@@ -127,7 +127,6 @@ function runPS(command: string): Promise<string> {
 // ── Print ─────────────────────────────────────────────────────────────────────
 
 function printDirect(lines: string[], printerName: string): Promise<void> {
-  // encode lines เป็น base64 UTF-8 JSON เพื่อส่งผ่าน PowerShell โดยไม่มีปัญหา escaping ภาษาไทย
   const b64Lines  = Buffer.from(JSON.stringify(lines), 'utf8').toString('base64');
   const safeName  = printerName.replace(/'/g, "''");
 
@@ -137,6 +136,32 @@ Add-Type -TypeDefinition @'
 ${LABEL_PRINTER_CS}
 '@ -ReferencedAssemblies 'System.Drawing'
 
+# ── ตรวจสอบเครื่องพิมพ์ก่อน submit ──────────────────────────────────
+$prn = Get-Printer -Name '${safeName}' -ErrorAction Stop
+
+if ($prn.WorkOffline) {
+    throw "เครื่องพิมพ์ถูกตั้งเป็น Offline กรุณาตรวจสอบการเชื่อมต่อ"
+}
+
+# USB / locally-attached: ตรวจ PnP status
+$pnp = Get-PnpDevice -Class Printer -ErrorAction SilentlyContinue |
+       Where-Object { $_.FriendlyName -eq '${safeName}' } |
+       Select-Object -First 1
+if ($pnp -and $pnp.Status -ne 'OK') {
+    throw "เครื่องพิมพ์ไม่พร้อม (PnP Status: $($pnp.Status)) — กรุณาตรวจสอบการเชื่อมต่อ"
+}
+
+# Network printer: ตรวจ TCP port 9100
+$port = Get-PrinterPort -Name $prn.PortName -ErrorAction SilentlyContinue
+if ($port -and $port.PrinterHostAddress) {
+    $ok = Test-NetConnection -ComputerName $port.PrinterHostAddress -Port 9100 \`
+          -WarningAction SilentlyContinue -InformationLevel Quiet
+    if (-not $ok) {
+        throw "ไม่สามารถเชื่อมต่อเครื่องพิมพ์ที่ $($port.PrinterHostAddress):9100"
+    }
+}
+
+# ── พิมพ์ ─────────────────────────────────────────────────────────────
 $lines = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64Lines}')) | ConvertFrom-Json
 [LabelPrinter]::PrintLabel('${safeName}', [string[]]$lines, 60, 60, 203)
 `;
