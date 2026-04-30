@@ -19,7 +19,7 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
           AND med_quantity < min_quantity AND is_expired = false`),
       query<{ cnt: string }>(`
         SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-        WHERE is_expired = true OR exp_date < NOW()`),
+        WHERE (is_expired = true OR exp_date < NOW()) AND med_quantity > 0`),
       query<{ cnt: string }>(`
         SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions
         WHERE status = 'dispensed' AND DATE(dispensed_at) = $1`, [today]),
@@ -33,11 +33,11 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
         SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions WHERE status = 'pending'`),
       query(`
         SELECT
-          COUNT(*) FILTER (WHERE status = 'waiting') AS waiting,
-          COUNT(*) FILTER (WHERE status = 'called')  AS called,
-          COUNT(*) FILTER (WHERE status = 'completed' AND DATE(completed_at) = $1) AS completed_today
+          COUNT(*) FILTER (WHERE status = 'waiting')   AS waiting,
+          COUNT(*) FILTER (WHERE status = 'called')    AS called,
+          COUNT(*) FILTER (WHERE status = 'completed') AS completed_today
         FROM ${SCHEMA}.queue_entries
-        WHERE status IN ('waiting','called') OR DATE(created_at) = $1`, [today]),
+        WHERE DATE(created_at) = $1`, [today]),
     ]);
 
     const nearExpiryDays = parseInt(settingRes.rows[0]?.value ?? '30');
@@ -46,7 +46,7 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
       query<{ cnt: string }>(`
         SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
         WHERE exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
-          AND is_expired = false`, [nearExpiryDays]),
+          AND is_expired = false AND med_quantity > 0`, [nearExpiryDays]),
       query(`
         SELECT ms.med_sid,
           COALESCE(ms.med_showname, mt.med_name) AS drug_name,
