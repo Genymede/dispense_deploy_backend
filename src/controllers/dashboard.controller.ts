@@ -30,7 +30,8 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
         SELECT COUNT(*) AS cnt FROM ${SCHEMA}.stock_transactions
         WHERE DATE(created_at) = $1`, [today]),
       query<{ cnt: string }>(`
-        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions WHERE status = 'pending'`),
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions
+        WHERE status = 'pending' AND COALESCE(source, 'counter') = 'counter'`),
       query(`
         SELECT
           COUNT(*) FILTER (WHERE status = 'waiting')   AS waiting,

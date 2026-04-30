@@ -335,8 +335,9 @@ export async function dispensePrescription(req: Request, res: Response, next: Ne
         }
         await client.query(
           `UPDATE ${SCHEMA}.queue_entries
-           SET status = 'called', called_at = NOW(), called_by = $2
-           WHERE queue_id = $1 AND status != 'called'`,
+           SET status = 'completed', called_at = COALESCE(called_at, NOW()), called_by = COALESCE(called_by, $2),
+               completed_at = NOW()
+           WHERE queue_id = $1 AND status != 'completed'`,
           [queue_id, resolvedDispenser || null]
         );
         // บันทึก queue_number ลง prescriptions เพื่อใช้แสดงย้อนหลัง
