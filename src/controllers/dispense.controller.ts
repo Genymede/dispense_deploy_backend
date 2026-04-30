@@ -20,8 +20,8 @@ export async function getPrescriptions(req: Request, res: Response, next: NextFu
     if (patient_id) { where += ` AND pr.patient_id = $${p}`; params.push(Number(patient_id)); p++; }
     if (status) { where += ` AND pr.status = $${p}`; params.push(status); p++; }
     if (ward) { where += ` AND pr.ward = $${p}`; params.push(ward); p++; }
-    if (date_from) { where += ` AND ${dateField} >= $${p}`; params.push(date_from); p++; }
-    if (date_to) { where += ` AND ${dateField} < $${p}::date + 1`; params.push(date_to); p++; }
+    if (date_from) { where += ` AND DATE(${dateField} AT TIME ZONE 'Asia/Bangkok') >= $${p}::date`; params.push(date_from); p++; }
+    if (date_to) { where += ` AND DATE(${dateField} AT TIME ZONE 'Asia/Bangkok') <= $${p}::date`; params.push(date_to); p++; }
     if (search) {
       where += ` AND (pr.prescription_no ILIKE $${p} OR pa.first_name ILIKE $${p} OR pa.last_name ILIKE $${p} OR pa.hn_number ILIKE $${p})`;
       params.push(`%${search}%`); p++;
