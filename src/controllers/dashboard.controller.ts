@@ -281,7 +281,8 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       }
     } catch { /* cut_off_period may not have last_executed_at yet */ }
 
-    const persistableAlerts = liveAlerts.filter(a => a.med_sid != null);
+    const NON_ENUM_TYPES = new Set(['new_drug']);
+    const persistableAlerts = liveAlerts.filter(a => a.med_sid != null && !NON_ENUM_TYPES.has(a.alert_type));
     if (persistableAlerts.length > 0) {
       const values = persistableAlerts
         .map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`)
