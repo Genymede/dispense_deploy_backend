@@ -6,51 +6,82 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    const [settingRes, total, lowStock, expired, todayDispense, todayStockIn, todayTx] =
-      await Promise.all([
-        query(`SELECT value FROM ${SCHEMA}.system_settings WHERE key = 'near_expiry_days'`),
-        query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse`
-        ),
-        query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-           WHERE med_quantity > 0 AND min_quantity IS NOT NULL
-             AND med_quantity < min_quantity AND is_expired = false`
-        ),
-        query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-           WHERE is_expired = true OR exp_date < NOW()`
-        ),
-        query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions
-           WHERE status = 'dispensed' AND DATE(dispensed_at) = $1`, [today]
-        ),
-        query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.stock_transactions
-           WHERE tx_type = 'in' AND DATE(created_at) = $1`, [today]
-        ),
-        query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.stock_transactions
-           WHERE DATE(created_at) = $1`, [today]
-        ),
-      ]);
+    const [
+      settingRes, total, lowStock, expired,
+      todayDispense, todayStockIn, todayTx,
+      pendingRx, queueStats,
+    ] = await Promise.all([
+      query(`SELECT value FROM ${SCHEMA}.system_settings WHERE key = 'near_expiry_days'`),
+      query<{ cnt: string }>(`SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse`),
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
+        WHERE med_quantity > 0 AND min_quantity IS NOT NULL
+          AND med_quantity < min_quantity AND is_expired = false`),
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
+        WHERE is_expired = true OR exp_date < NOW()`),
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions
+        WHERE status = 'dispensed' AND DATE(dispensed_at) = $1`, [today]),
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.stock_transactions
+        WHERE tx_type = 'in' AND DATE(created_at) = $1`, [today]),
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.stock_transactions
+        WHERE DATE(created_at) = $1`, [today]),
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions WHERE status = 'pending'`),
+      query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'waiting') AS waiting,
+          COUNT(*) FILTER (WHERE status = 'called')  AS called,
+          COUNT(*) FILTER (WHERE status = 'completed' AND DATE(completed_at) = $1) AS completed_today
+        FROM ${SCHEMA}.queue_entries
+        WHERE status IN ('waiting','called') OR DATE(created_at) = $1`, [today]),
+    ]);
 
     const nearExpiryDays = parseInt(settingRes.rows[0]?.value ?? '30');
-    const nearExpiry = await query<{ cnt: string }>(
-      `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-       WHERE exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
-         AND is_expired = false`,
-      [nearExpiryDays]
-    );
+
+    const [nearExpiry, nearExpiryTop, recentTx] = await Promise.all([
+      query<{ cnt: string }>(`
+        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
+        WHERE exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
+          AND is_expired = false`, [nearExpiryDays]),
+      query(`
+        SELECT ms.med_sid,
+          COALESCE(ms.med_showname, mt.med_name) AS drug_name,
+          ms.exp_date, ms.med_quantity,
+          (ms.exp_date::date - CURRENT_DATE) AS days_left
+        FROM ${SCHEMA}.med_subwarehouse ms
+        JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+        WHERE ms.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
+          AND ms.is_expired = false AND ms.med_quantity > 0
+        ORDER BY ms.exp_date ASC LIMIT 6`, [nearExpiryDays]),
+      query(`
+        SELECT st.tx_id, st.tx_type, st.quantity, st.created_at,
+          COALESCE(ms.med_showname, mt.med_name) AS drug_name
+        FROM ${SCHEMA}.stock_transactions st
+        JOIN ${SCHEMA}.med_subwarehouse ms ON ms.med_sid = st.med_sid
+        JOIN ${SCHEMA}.med_table mt ON mt.med_id = st.med_id
+        ORDER BY st.created_at DESC LIMIT 8`),
+    ]);
+
+    const qs = queueStats.rows[0] ?? {};
 
     res.json({
-      total_drugs:               parseInt(total.rows[0]?.cnt ?? '0'),
-      low_stock_count:           parseInt(lowStock.rows[0]?.cnt ?? '0'),
-      near_expiry_count:         parseInt(nearExpiry.rows[0]?.cnt ?? '0'),
-      expired_count:             parseInt(expired.rows[0]?.cnt ?? '0'),
-      today_dispense_count:      parseInt(todayDispense.rows[0]?.cnt ?? '0'),
-      today_stock_in_count:      parseInt(todayStockIn.rows[0]?.cnt ?? '0'),
-      total_transactions_today:  parseInt(todayTx.rows[0]?.cnt ?? '0'),
+      total_drugs:              parseInt(total.rows[0]?.cnt ?? '0'),
+      low_stock_count:          parseInt(lowStock.rows[0]?.cnt ?? '0'),
+      near_expiry_count:        parseInt(nearExpiry.rows[0]?.cnt ?? '0'),
+      expired_count:            parseInt(expired.rows[0]?.cnt ?? '0'),
+      today_dispense_count:     parseInt(todayDispense.rows[0]?.cnt ?? '0'),
+      today_stock_in_count:     parseInt(todayStockIn.rows[0]?.cnt ?? '0'),
+      total_transactions_today: parseInt(todayTx.rows[0]?.cnt ?? '0'),
+      pending_prescriptions:    parseInt(pendingRx.rows[0]?.cnt ?? '0'),
+      queue_waiting:            parseInt(qs.waiting ?? '0'),
+      queue_called:             parseInt(qs.called ?? '0'),
+      queue_completed_today:    parseInt(qs.completed_today ?? '0'),
+      near_expiry_top:          nearExpiryTop.rows,
+      recent_transactions:      recentTx.rows,
     });
   } catch (err) { next(err); }
 }
@@ -58,20 +89,28 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
 // ── GET /dashboard/stock-summary ──────────────────────────────────────────────
 export async function getStockSummary(req: Request, res: Response, next: NextFunction) {
   try {
-    const days = parseInt(req.query.days as string) || 14;
+    const days = parseInt(req.query.days as string) || 30;
     const { rows } = await query(
       `SELECT
          TO_CHAR(d.date, 'YYYY-MM-DD') AS date,
-         COALESCE(SUM(CASE WHEN st.tx_type = 'in'     THEN st.quantity ELSE 0 END), 0) AS stock_in,
+         COALESCE(SUM(CASE WHEN st.tx_type = 'in'     THEN st.quantity      ELSE 0 END), 0) AS stock_in,
          COALESCE(SUM(CASE WHEN st.tx_type = 'out'    THEN ABS(st.quantity) ELSE 0 END), 0) AS stock_out,
-         COALESCE(SUM(CASE WHEN st.tx_type = 'return' THEN st.quantity ELSE 0 END), 0) AS stock_return
+         COALESCE(SUM(CASE WHEN st.tx_type = 'return' THEN st.quantity      ELSE 0 END), 0) AS stock_return,
+         COALESCE(rx.cnt, 0) AS dispensed_count
        FROM generate_series(
          CURRENT_DATE - ($1 - 1) * INTERVAL '1 day',
          CURRENT_DATE,
          '1 day'::interval
        ) AS d(date)
        LEFT JOIN ${SCHEMA}.stock_transactions st ON DATE(st.created_at) = d.date
-       GROUP BY d.date
+       LEFT JOIN (
+         SELECT DATE(dispensed_at) AS date, COUNT(*) AS cnt
+         FROM ${SCHEMA}.prescriptions
+         WHERE status = 'dispensed'
+           AND dispensed_at >= CURRENT_DATE - ($1 - 1) * INTERVAL '1 day'
+         GROUP BY DATE(dispensed_at)
+       ) rx ON rx.date = d.date
+       GROUP BY d.date, rx.cnt
        ORDER BY d.date ASC`,
       [days]
     );
@@ -84,13 +123,11 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
   try {
     const { is_read, type } = req.query;
 
-    // read near_expiry_days setting
     const { rows: settingRows } = await query(
       `SELECT value FROM ${SCHEMA}.system_settings WHERE key='near_expiry_days'`
     );
     const nearExpiryDays = parseInt(settingRows[0]?.value ?? '30');
 
-    // Build live alerts from DB state
     const liveAlerts: any[] = [];
 
     // Low stock
@@ -117,7 +154,7 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       });
     }
 
-    // Near expiry (dynamic days from settings)
+    // Near expiry
     const { rows: nearRows } = await query(
       `SELECT
          ms.med_sid, ms.exp_date,
@@ -163,7 +200,7 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       });
     }
 
-    // Incomplete drug records (missing display name / price / min stock)
+    // Incomplete drug records
     const { rows: incompleteRows } = await query(
       `SELECT ms.med_sid, COALESCE(ms.med_showname, mt.med_name) AS drug_name
        FROM ${SCHEMA}.med_subwarehouse ms
@@ -185,7 +222,7 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       });
     }
 
-    // Upcoming cut-off (within 3 days)
+    // Upcoming cut-off
     try {
       const { rows: cutRows } = await query(
         `SELECT mcp.*, sw.name AS warehouse_name
@@ -209,8 +246,6 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       }
     } catch { /* cut_off_period may not have last_executed_at yet */ }
 
-    // auto-register new alerts into alert_log (ON CONFLICT DO NOTHING → preserves original created_at)
-    // Only persist alerts with non-null med_sid (cut_off alerts have no med_sid)
     const persistableAlerts = liveAlerts.filter(a => a.med_sid != null);
     if (persistableAlerts.length > 0) {
       const values = persistableAlerts
@@ -225,7 +260,6 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       );
     }
 
-    // fetch is_read + created_at from log
     const { rows: logRows } = await query(
       `SELECT med_sid, alert_type, is_read, created_at FROM ${SCHEMA}.alert_log`
     );
@@ -257,7 +291,6 @@ export async function markAlertRead(req: Request, res: Response, next: NextFunct
   try {
     const { med_sid } = req.params;
     const { alert_type } = req.body;
-
     await query(
       `INSERT INTO ${SCHEMA}.alert_log (med_sid, alert_type, is_read)
        VALUES ($1, $2, true)
@@ -271,9 +304,7 @@ export async function markAlertRead(req: Request, res: Response, next: NextFunct
 // ── PUT /alerts/read-all ──────────────────────────────────────────────────────
 export async function markAllAlertsRead(req: Request, res: Response, next: NextFunction) {
   try {
-    await query(
-      `UPDATE ${SCHEMA}.alert_log SET is_read = true WHERE is_read = false`
-    );
+    await query(`UPDATE ${SCHEMA}.alert_log SET is_read = true WHERE is_read = false`);
     res.json({ success: true });
   } catch (err) { next(err); }
 }
