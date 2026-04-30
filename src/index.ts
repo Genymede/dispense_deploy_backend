@@ -31,6 +31,8 @@ async function ensureColumns() {
   const safeAlters = [
     `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS diagnosis TEXT`,
     `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
+    `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'counter'`,
+    `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS queue_number VARCHAR(10)`,
   ];
   for (const sql of safeAlters) {
     try { await query(sql); } catch { /* already exists */ }

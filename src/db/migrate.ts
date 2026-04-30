@@ -227,6 +227,24 @@ const migrations: string[] = [
 
   // units_per_pack ถูกยกเลิก — ระบบจัดการสต็อกเป็นเม็ดอย่างเดียว
   `ALTER TABLE ${SCHEMA}.med_subwarehouse DROP COLUMN IF EXISTS units_per_pack`,
+
+  // ── med_table: ย้าย main_item_id มาไว้ที่ทะเบียนยาหลัก ───────────────────────
+  `ALTER TABLE ${SCHEMA}.med_table ADD COLUMN IF NOT EXISTS main_item_id UUID`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_med_table_main_item_id
+   ON ${SCHEMA}.med_table(main_item_id) WHERE main_item_id IS NOT NULL`,
+  // migrate: copy main_item_id จาก med_subwarehouse → med_table (ข้อมูลเดิม)
+  `UPDATE ${SCHEMA}.med_table mt
+   SET main_item_id = ms.main_item_id
+   FROM ${SCHEMA}.med_subwarehouse ms
+   WHERE ms.med_id = mt.med_id
+     AND ms.main_item_id IS NOT NULL
+     AND mt.main_item_id IS NULL`,
+
+  // ── prescriptions: คอลัมน์ที่ขาดหายไป ───────────────────────────────────────
+  // source: ระบุแหล่งที่มาของใบสั่งยา ('counter' = สร้างจากระบบนี้, ค่า default)
+  `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'counter'`,
+  // queue_number: หมายเลขคิวที่ผูกกับใบสั่งยานี้ (บันทึกหลังจ่ายยา)
+  `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS queue_number VARCHAR(10)`,
 ];
 
 async function migrate() {

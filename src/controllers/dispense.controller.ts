@@ -316,7 +316,7 @@ export async function dispensePrescription(req: Request, res: Response, next: Ne
         const { rows: existingQ } = await client.query(
           `SELECT queue_id, queue_number FROM ${SCHEMA}.queue_entries
            WHERE patient_id = $1 AND status IN ('waiting','called')
-             AND DATE(created_at) = CURRENT_DATE
+             AND DATE(created_at AT TIME ZONE 'Asia/Bangkok') = CURRENT_DATE AT TIME ZONE 'Asia/Bangkok'
            ORDER BY queue_id ASC LIMIT 1`,
           [rx.patient_id]
         );
