@@ -798,7 +798,7 @@ export async function getRequisitions(req: Request, res: Response, next: NextFun
          COALESCE(json_agg(
            json_build_object(
              'id',          ri.id,
-             'item_name',   COALESCE(ms.med_showname, inv.name),
+             'item_name',   COALESCE(inv.name, ms.med_name),
              'item_code',   inv.code,
              'req_qty',     ri.req_qty,
              'approved_qty',ri.approved_qty,
