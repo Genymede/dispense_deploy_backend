@@ -766,3 +766,68 @@ export async function getLotsReport(req: Request, res: Response, next: NextFunct
     res.json({ type, days, data: rows });
   } catch (err) { next(err); }
 }
+
+// ── GET /stock/requisitions — คำขอเบิกยาจากห้องจ่ายยา (department_id=7) ────────
+export async function getRequisitions(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { status, page = 1, limit = 30 } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+    const DEPT_ID = 7; // ห้องจ่ายยา
+
+    const params: any[] = [DEPT_ID];
+    let whereExtra = '';
+    if (status && status !== 'all') {
+      whereExtra = ` AND rh.status = $${params.length + 1}`;
+      params.push(String(status).toUpperCase());
+    }
+
+    const { rows } = await query(
+      `SELECT
+         rh.id,
+         rh.doc_no,
+         rh.type,
+         rh.status,
+         rh.request_date,
+         rh.due_date,
+         rh.note,
+         rh.created_at,
+         rh.updated_at,
+         COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS requester_name,
+         COUNT(ri.id)::integer AS item_count,
+         COALESCE(SUM(ri.req_qty), 0)::integer AS total_req_qty,
+         COALESCE(json_agg(
+           json_build_object(
+             'id',          ri.id,
+             'item_name',   COALESCE(ms.med_showname, inv.name),
+             'item_code',   inv.code,
+             'req_qty',     ri.req_qty,
+             'approved_qty',ri.approved_qty,
+             'issued_qty',  ri.issued_qty,
+             'note',        ri.note
+           ) ORDER BY ri.id
+         ) FILTER (WHERE ri.id IS NOT NULL), '[]') AS items
+       FROM inventory.requisition_header rh
+       LEFT JOIN public.profiles pu      ON pu.id = rh.requester_id
+       LEFT JOIN auth.users     au      ON au.id = rh.requester_id
+       LEFT JOIN inventory.requisition_item ri ON ri.header_id = rh.id
+       LEFT JOIN inventory.items inv           ON inv.id = ri.item_id
+       LEFT JOIN ${SCHEMA}.med_table ms        ON ms.main_item_id = ri.item_id
+       WHERE rh.department_id = $1
+       ${whereExtra}
+       GROUP BY rh.id, pu.firstname_th, pu.lastname_th, au.email
+       ORDER BY rh.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, Number(limit), offset]
+    );
+
+    const { rows: countRows } = await query(
+      `SELECT COUNT(*) AS total
+       FROM inventory.requisition_header
+       WHERE department_id = $1
+       ${status && status !== 'all' ? `AND status = $2` : ''}`,
+      status && status !== 'all' ? [DEPT_ID, String(status).toUpperCase()] : [DEPT_ID]
+    );
+
+    res.json({ data: rows, total: parseInt(countRows[0]?.total ?? '0') });
+  } catch (err) { next(err); }
+}
