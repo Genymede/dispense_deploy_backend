@@ -92,60 +92,76 @@ async function recordTx(client: any, data: {
   return rows[0];
 }
 
-// ── POST /stock/receive — คลังหลักอนุมัติแล้ว เพิ่มสต็อกทันที ────────────────
-export async function receiveStock(req: Request, res: Response, next: NextFunction) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+// ── Helper: process one stock-in item within an active transaction ────────────
+interface ReceiveItem {
+  med_sid?: number; item_id?: string;
+  quantity: number; lot_number?: string; expiry_date?: string; mfg_date?: string;
+  note?: string; drug_code?: string; image_url?: string;
+  med_name?: string; med_generic_name?: string; med_counting_unit?: string;
+  med_medical_category?: string; packaging_type?: string;
+  min_quantity?: number; max_quantity?: number;
+}
+interface ReceiveShared {
+  reference_no?: string; performed_by?: number | null; source_type: string;
+}
 
-    const {
-      med_sid, item_id,
-      quantity, lot_number, expiry_date, mfg_date,
-      reference_no, performed_by, note,
-      source_type = 'main_warehouse',
-      drug_code, image_url,
-      // fields สำหรับ auto-create ยาใหม่ (ใช้เฉพาะเมื่อไม่เจอยาในระบบ)
-      med_name, med_generic_name, med_counting_unit,
-      med_medical_category, packaging_type,
-      min_quantity: min_qty, max_quantity: max_qty,
-    } = req.body;
+async function processOneReceive(client: any, item: ReceiveItem, shared: ReceiveShared) {
+  const {
+    med_sid, item_id, quantity, lot_number, expiry_date, mfg_date,
+    note, drug_code, image_url, med_name, med_generic_name,
+    med_counting_unit, med_medical_category, packaging_type,
+    min_quantity: min_qty, max_quantity: max_qty,
+  } = item;
+  const { reference_no, performed_by, source_type } = shared;
 
-    if (!med_sid && !item_id)
-      throw new AppError('ต้องระบุ med_sid หรือ item_id อย่างใดอย่างหนึ่ง', 400);
-    if (!quantity || quantity <= 0)
-      throw new AppError('quantity (>0) จำเป็น', 400);
+  if (!med_sid && !item_id)
+    throw new AppError('ต้องระบุ med_sid หรือ item_id', 400);
+  if (!quantity || quantity <= 0)
+    throw new AppError('quantity (>0) จำเป็น', 400);
 
-    if (expiry_date) {
-      const exp = new Date(expiry_date);
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      if (exp < today)
-        throw new AppError('ไม่สามารถรับยาที่หมดอายุแล้วเข้าคลังได้', 400);
-    }
+  if (expiry_date) {
+    const exp = new Date(expiry_date);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (exp < today)
+      throw new AppError(`ไม่สามารถรับยาที่หมดอายุแล้วเข้าคลัง (item_id: ${item_id ?? med_sid})`, 400);
+  }
 
-    const resolvedPerformer = performed_by != null
-      ? await resolveUserId(performed_by)
-      : ((req as any).currentUser?.id ?? null);
-
-    // lookup ด้วย item_id หรือ med_sid
-    const lookupCol = item_id ? 'main_item_id' : 'med_sid';
-    const lookupVal = item_id ?? med_sid;
-    let { rows: drugRows } = await client.query(
-      `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE ${lookupCol} = $1 FOR UPDATE`,
-      [lookupVal]
+  // lookup: item_id → med_table.main_item_id → med_id → med_subwarehouse
+  let resolvedMedId: number | null = null;
+  if (item_id) {
+    const { rows: mtRows } = await client.query(
+      `SELECT med_id FROM ${SCHEMA}.med_table WHERE main_item_id = $1`,
+      [item_id]
     );
+    if (!mtRows.length)
+      throw new AppError(`ไม่พบยาในทะเบียนยาหลัก (item_id: ${item_id})`, 404);
+    resolvedMedId = mtRows[0].med_id;
+  }
 
-    // ── Auto-create: ยาไม่มีในระบบ → สร้างอัตโนมัติจากข้อมูลที่ส่งมา ──────────
-    let wasAutoCreated = false;
-    if (!drugRows.length) {
+  let { rows: drugRows } = await (
+    resolvedMedId
+      ? client.query(
+          `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_id = $1 FOR UPDATE`,
+          [resolvedMedId]
+        )
+      : client.query(
+          `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_sid = $1 FOR UPDATE`,
+          [med_sid]
+        )
+  );
+
+  // Auto-create: ยาไม่มีใน subwarehouse → สร้างอัตโนมัติ
+  let wasAutoCreated = false;
+  if (!drugRows.length) {
+    let medId: number;
+    if (resolvedMedId) {
+      medId = resolvedMedId;
+    } else {
       if (!med_name) throw new AppError('ไม่พบยาในระบบ — กรุณาส่ง med_name เพื่อสร้างยาใหม่อัตโนมัติ', 404);
-
-      // หา med_id จาก med_table (ถ้าไม่มีให้สร้างใหม่)
       const { rows: mtRows } = await client.query(
         `SELECT med_id FROM ${SCHEMA}.med_table WHERE med_name = $1 LIMIT 1`,
         [med_name]
       );
-      let medId: number;
       if (mtRows.length) {
         medId = mtRows[0].med_id;
       } else {
@@ -158,97 +174,152 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
         );
         medId = newMt[0].med_id;
       }
-
-      // สร้าง med_subwarehouse entry ใหม่
-      const { rows: newSub } = await client.query(
-        `INSERT INTO ${SCHEMA}.med_subwarehouse
-           (med_id, main_item_id, drug_code, image_url,
-            packaging_type, min_quantity, max_quantity, med_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
-         RETURNING med_sid, med_id, med_quantity`,
-        [medId, item_id || null, drug_code || null, image_url || null,
-         packaging_type || 'เม็ด', min_qty || null, max_qty || null]
-      );
-      drugRows = newSub;
-      wasAutoCreated = true;
     }
+    // auto-create: ดึง med_showname / ราคา จาก med_table ผ่าน SELECT เพื่อไม่ให้ field ว่าง
+    const { rows: newSub } = await client.query(
+      `INSERT INTO ${SCHEMA}.med_subwarehouse
+         (med_id, drug_code, image_url, packaging_type, min_quantity, max_quantity, med_quantity,
+          med_showname, med_showname_eng, cost_price, unit_price)
+       SELECT
+         $1, $2, $3, $4, $5, $6, 0,
+         COALESCE(mt.med_marketing_name, mt.med_thai_name, mt.med_name),
+         mt.med_name,
+         mt.med_cost_price::numeric,
+         mt.med_selling_price::numeric
+       FROM ${SCHEMA}.med_table mt WHERE mt.med_id = $1
+       RETURNING med_sid, med_id, med_quantity`,
+      [medId, drug_code || null, image_url || null,
+       packaging_type || 'เม็ด', min_qty || null, max_qty || null]
+    );
+    drugRows = newSub;
+    wasAutoCreated = true;
+  }
 
-    const drug      = drugRows[0];
-    const balBefore = parseInt(drug.med_quantity);
+  const drug      = drugRows[0];
+  const balBefore = parseInt(drug.med_quantity);
 
-    // ── Lot deduplication: lot_number เดิม → บวกจำนวน, ใหม่ → สร้าง ────────────
-    let newLotId: number;
-    if (lot_number) {
-      const { rows: existingLot } = await client.query(
-        `SELECT lot_id FROM ${SCHEMA}.med_stock_lots
-         WHERE med_sid = $1 AND lot_number = $2 AND status = 'active'
-         LIMIT 1`,
-        [drug.med_sid, lot_number]
+  // Lot deduplication
+  let newLotId: number;
+  if (lot_number) {
+    const { rows: existingLot } = await client.query(
+      `SELECT lot_id FROM ${SCHEMA}.med_stock_lots
+       WHERE med_sid = $1 AND lot_number = $2 AND status = 'active' LIMIT 1`,
+      [drug.med_sid, lot_number]
+    );
+    if (existingLot.length) {
+      await client.query(
+        `UPDATE ${SCHEMA}.med_stock_lots SET quantity = quantity + $1, updated_at = NOW() WHERE lot_id = $2`,
+        [parseInt(quantity), existingLot[0].lot_id]
       );
-      if (existingLot.length) {
-        // lot เดิม — บวกจำนวนเข้าไป
-        await client.query(
-          `UPDATE ${SCHEMA}.med_stock_lots
-           SET quantity = quantity + $1, updated_at = NOW()
-           WHERE lot_id = $2`,
-          [parseInt(quantity), existingLot[0].lot_id]
-        );
-        newLotId = existingLot[0].lot_id;
-      } else {
-        // lot ใหม่
-        const { rows: lotRows } = await client.query(
-          `INSERT INTO ${SCHEMA}.med_stock_lots
-             (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
-           VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active')
-           RETURNING lot_id`,
-          [drug.med_sid, lot_number, parseInt(quantity),
-           expiry_date || null, mfg_date || null, note || null]
-        );
-        newLotId = lotRows[0].lot_id;
-      }
+      newLotId = existingLot[0].lot_id;
     } else {
-      // ไม่มีเลข lot — สร้างใหม่เสมอ
       const { rows: lotRows } = await client.query(
-        `INSERT INTO ${SCHEMA}.med_stock_lots
-           (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
-         VALUES ($1, NULL, $2, $3::date, $4::date, $5, 'active')
-         RETURNING lot_id`,
-        [drug.med_sid, parseInt(quantity),
-         expiry_date || null, mfg_date || null, note || null]
+        `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
+         VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active') RETURNING lot_id`,
+        [drug.med_sid, lot_number, parseInt(quantity), expiry_date || null, mfg_date || null, note || null]
       );
       newLotId = lotRows[0].lot_id;
     }
-    const balAfter  = await recalcTotal(drug.med_sid, client);
-
-    // sync ข้อมูลจากคลังหลัก (main_item_id, drug_code, image_url) ถ้าส่งมาด้วย
-    const syncFields: string[] = ['is_expired = false'];
-    const syncParams: any[]    = [];
-    if (item_id)   { syncParams.push(item_id);   syncFields.push(`main_item_id = $${syncParams.length}`); }
-    if (drug_code) { syncParams.push(drug_code);  syncFields.push(`drug_code = $${syncParams.length}`); }
-    if (image_url) { syncParams.push(image_url);  syncFields.push(`image_url = $${syncParams.length}`); }
-    syncParams.push(drug.med_sid);
-    await client.query(
-      `UPDATE ${SCHEMA}.med_subwarehouse SET ${syncFields.join(', ')} WHERE med_sid = $${syncParams.length}`,
-      syncParams
+  } else {
+    const { rows: lotRows } = await client.query(
+      `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
+       VALUES ($1, NULL, $2, $3::date, $4::date, $5, 'active') RETURNING lot_id`,
+      [drug.med_sid, parseInt(quantity), expiry_date || null, mfg_date || null, note || null]
     );
+    newLotId = lotRows[0].lot_id;
+  }
 
-    const tx = await recordTx(client, {
-      med_sid: drug.med_sid, med_id: drug.med_id,
-      tx_type: 'in', quantity: parseInt(quantity),
-      balance_before: balBefore, balance_after: balAfter,
-      lot_number, expiry_date, mfg_date, reference_no,
-      performed_by: resolvedPerformer ?? undefined, note,
-      approval_status: 'approved', source_type,
-    });
+  const balAfter = await recalcTotal(drug.med_sid, client);
 
-    // link lot กลับไปที่ transaction
-    await client.query(
-      `UPDATE ${SCHEMA}.stock_transactions SET lot_id = $1 WHERE tx_id = $2`,
-      [newLotId, tx.tx_id]
-    );
+  // sync: fill NULL fields จาก med_table อัตโนมัติ — ไม่ override ค่าที่มีอยู่แล้ว
+  await client.query(
+    `UPDATE ${SCHEMA}.med_subwarehouse ms
+     SET
+       med_showname     = COALESCE(ms.med_showname,     mt.med_marketing_name, mt.med_thai_name, mt.med_name),
+       med_showname_eng = COALESCE(ms.med_showname_eng, mt.med_name),
+       cost_price       = COALESCE(ms.cost_price,       mt.med_cost_price::numeric),
+       unit_price       = COALESCE(ms.unit_price,       mt.med_selling_price::numeric),
+       drug_code        = COALESCE(ms.drug_code,        $2),
+       image_url        = COALESCE(ms.image_url,        $3),
+       is_expired       = false,
+       updated_at       = NOW()
+     FROM ${SCHEMA}.med_table mt
+     WHERE ms.med_sid = $1 AND mt.med_id = ms.med_id`,
+    [drug.med_sid, drug_code || null, image_url || null]
+  );
+
+  const tx = await recordTx(client, {
+    med_sid: drug.med_sid, med_id: drug.med_id,
+    tx_type: 'in', quantity: parseInt(quantity),
+    balance_before: balBefore, balance_after: balAfter,
+    lot_number, expiry_date, mfg_date, reference_no,
+    performed_by: performed_by ?? undefined, note,
+    approval_status: 'approved', source_type,
+  });
+
+  await client.query(
+    `UPDATE ${SCHEMA}.stock_transactions SET lot_id = $1 WHERE tx_id = $2`,
+    [newLotId, tx.tx_id]
+  );
+
+  return { tx, lot_id: newLotId, balance_after: balAfter, auto_created: wasAutoCreated, med_sid: drug.med_sid };
+}
+
+// ── POST /stock/receive + /stock/from-main ────────────────────────────────────
+// batch:  { reference_no, source_type, performed_by, items: [...] }
+// single: { item_id, quantity, reference_no, ... }  (backward compatible)
+// ทุกรายการอยู่ใน transaction เดียวกัน — รายการใดผิด rollback ทั้งหมด
+export async function receiveStock(req: Request, res: Response, next: NextFunction) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
+
+    const { items, reference_no, performed_by, source_type = 'main_warehouse', ...singleItem } = req.body;
+    const isBatch = Array.isArray(items);
+
+    if (isBatch && items.length === 0) throw new AppError('items ต้องมีอย่างน้อย 1 รายการ', 400);
+    if (isBatch && items.length > 100) throw new AppError('รับได้สูงสุด 100 รายการต่อครั้ง', 400);
+
+    const resolvedPerformer = performed_by != null
+      ? await resolveUserId(performed_by)
+      : ((req as any).currentUser?.id ?? null);
+
+    const shared: ReceiveShared = { reference_no, performed_by: resolvedPerformer, source_type };
+    const list: ReceiveItem[]   = isBatch ? items : [singleItem];
+
+    const results = [];
+    for (let i = 0; i < list.length; i++) {
+      try {
+        const result = await processOneReceive(client, list[i], shared);
+        results.push({
+          index: i,
+          success: true,
+          med_sid: result.med_sid,
+          lot_id: result.lot_id,
+          balance_after: result.balance_after,
+          auto_created: result.auto_created,
+          tx_id: result.tx.tx_id,
+        });
+      } catch (err: any) {
+        throw new AppError(`รายการที่ ${i + 1}: ${err.message}`, err.statusCode ?? 400);
+      }
+    }
 
     await client.query('COMMIT');
-    res.status(201).json({ ...tx, lot_id: newLotId, balance_after: balAfter, auto_created: wasAutoCreated, new_med_sid: wasAutoCreated ? drug.med_sid : undefined });
+
+    if (isBatch) {
+      res.status(201).json({ total_received: results.length, results });
+    } else {
+      const r = results[0];
+      res.status(201).json({
+        tx_id: r.tx_id,
+        lot_id: r.lot_id,
+        balance_after: r.balance_after,
+        auto_created: r.auto_created,
+        new_med_sid: r.auto_created ? r.med_sid : undefined,
+      });
+    }
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) {}
     next(err);
@@ -306,7 +377,7 @@ export async function stockIn(req: Request, res: Response, next: NextFunction) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const {
       med_sid, quantity, lot_number, expiry_date, mfg_date,
@@ -382,7 +453,7 @@ export async function approveStockIn(req: Request, res: Response, next: NextFunc
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { tx_id } = req.params;
     const { approved_by } = req.body;
@@ -454,7 +525,7 @@ export async function adjustStock(req: Request, res: Response, next: NextFunctio
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { med_sid, new_quantity, performed_by, note } = req.body;
     const resolvedPerformer = performed_by != null
@@ -505,7 +576,7 @@ export async function returnStock(req: Request, res: Response, next: NextFunctio
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { med_sid, quantity, ward_from, reference_no, performed_by, note } = req.body;
     const resolvedPerformer = performed_by != null
@@ -548,7 +619,7 @@ export async function markExpired(req: Request, res: Response, next: NextFunctio
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { med_sid, quantity, lot_number, performed_by, note } = req.body;
     const resolvedPerformer = performed_by != null
