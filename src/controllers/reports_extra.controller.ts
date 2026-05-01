@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { query, SCHEMA, paginate } from '../db/pool';
 import { AppError } from '../middleware/errorHandler';
+import { runCutOffLogic } from '../scheduler';
 
 function df(v: unknown) { return typeof v === 'string' && v ? v : undefined; }
 
@@ -267,7 +268,7 @@ export async function reportOverdueMed(req: Request, res: Response, next: NextFu
 export async function reportCutOff(req: Request, res: Response, next: NextFunction) {
   try {
     const { rows } = await query(
-      `SELECT mcp.*, sw.name AS warehouse_name
+      `SELECT mcp.*, mcp.med_period_id AS cut_off_period_id, sw.name AS warehouse_name
        FROM ${SCHEMA}.med_cut_off_period mcp
        JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id=mcp.sub_warehouse_id
        ORDER BY mcp.period_month, mcp.period_day`);
@@ -279,15 +280,35 @@ export async function reportCutOff(req: Request, res: Response, next: NextFuncti
 export async function executeCutOff(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
-    const { rows } = await query(
+
+    // ดึงข้อมูล period + warehouse
+    const { rows: periods } = await query(
+      `SELECT mcp.*, sw.name AS warehouse_name
+       FROM ${SCHEMA}.med_cut_off_period mcp
+       JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id = mcp.sub_warehouse_id
+       WHERE mcp.med_period_id = $1`,
+      [id]
+    );
+    if (!periods.length) throw new AppError('ไม่พบรายการ cut-off', 404);
+    const period = periods[0];
+
+    // รัน logic จริง
+    const summary = await runCutOffLogic(period.sub_warehouse_id, period.warehouse_name);
+
+    // อัปเดต timestamp หลัง logic สำเร็จ
+    const { rows: updated } = await query(
       `UPDATE ${SCHEMA}.med_cut_off_period
        SET last_executed_at = NOW(), updated_at = NOW()
        WHERE med_period_id = $1
-       RETURNING *, (SELECT name FROM ${SCHEMA}.sub_warehouse sw WHERE sw.sub_warehouse_id = med_cut_off_period.sub_warehouse_id) AS warehouse_name`,
-      [id]
+       RETURNING *, $2::text AS warehouse_name`,
+      [id, period.warehouse_name]
     );
-    if (!rows.length) throw new AppError('ไม่พบรายการ cut-off', 404);
-    res.json({ message: 'ดำเนินการตัดรอบแล้ว', data: rows[0] });
+
+    res.json({
+      message: 'ดำเนินการตัดรอบเรียบร้อย',
+      data: updated[0],
+      summary,
+    });
   } catch (err) { next(err); }
 }
 
