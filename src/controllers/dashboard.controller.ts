@@ -14,9 +14,16 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
       query(`SELECT value FROM ${SCHEMA}.system_settings WHERE key = 'near_expiry_days'`),
       query<{ cnt: string }>(`SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse`),
       query<{ cnt: string }>(`
-        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-        WHERE med_quantity > 0 AND min_quantity IS NOT NULL
-          AND med_quantity < min_quantity AND is_expired = false`),
+        SELECT COUNT(*) AS cnt
+        FROM ${SCHEMA}.med_subwarehouse ms
+        LEFT JOIN (
+          SELECT med_sid,
+            COALESCE(SUM(quantity) FILTER (WHERE exp_date IS NULL OR exp_date >= CURRENT_DATE), 0)::int AS lot_stock
+          FROM ${SCHEMA}.med_stock_lots GROUP BY med_sid
+        ) lc ON lc.med_sid = ms.med_sid
+        WHERE ms.min_quantity IS NOT NULL
+          AND COALESCE(lc.lot_stock, 0) > 0
+          AND COALESCE(lc.lot_stock, 0) < ms.min_quantity`),
       query<{ cnt: string }>(`
         SELECT COUNT(DISTINCT l.med_sid) AS cnt
         FROM ${SCHEMA}.med_stock_lots l
@@ -148,19 +155,25 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
 
     const liveAlerts: any[] = [];
 
-    // Low stock
+    // Low stock (lot-based)
     if (enabled('alert_enabled_low_stock')) {
       const { rows: lowRows } = await query(
         `SELECT
-           ms.med_sid, ms.med_quantity, ms.min_quantity,
+           ms.med_sid,
+           COALESCE(lc.lot_stock, 0) AS lot_quantity,
+           ms.min_quantity,
            COALESCE(ms.med_showname, mt.med_name) AS drug_name
          FROM ${SCHEMA}.med_subwarehouse ms
          JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-         WHERE ms.med_quantity > 0
-           AND ms.min_quantity IS NOT NULL
-           AND ms.med_quantity < ms.min_quantity
-           AND ms.is_expired = false
-         ORDER BY (ms.med_quantity::float / NULLIF(ms.min_quantity,0)) ASC
+         LEFT JOIN (
+           SELECT med_sid,
+             COALESCE(SUM(quantity) FILTER (WHERE exp_date IS NULL OR exp_date >= CURRENT_DATE), 0)::int AS lot_stock
+           FROM ${SCHEMA}.med_stock_lots GROUP BY med_sid
+         ) lc ON lc.med_sid = ms.med_sid
+         WHERE ms.min_quantity IS NOT NULL
+           AND COALESCE(lc.lot_stock, 0) > 0
+           AND COALESCE(lc.lot_stock, 0) < ms.min_quantity
+         ORDER BY (COALESCE(lc.lot_stock, 0)::float / NULLIF(ms.min_quantity,0)) ASC
          LIMIT 50`
       );
       for (const r of lowRows) {
@@ -168,8 +181,8 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
           alert_type: 'low_stock',
           med_sid: r.med_sid,
           drug_name: r.drug_name,
-          message: `สต็อกเหลือ ${r.med_quantity} หน่วย (ขั้นต่ำ ${r.min_quantity})`,
-          severity: r.med_quantity < r.min_quantity * 0.5 ? 'critical' : 'warning',
+          message: `สต็อกเหลือ ${r.lot_quantity} หน่วย (ขั้นต่ำ ${r.min_quantity})`,
+          severity: r.lot_quantity < r.min_quantity * 0.5 ? 'critical' : 'warning',
         });
       }
     }
