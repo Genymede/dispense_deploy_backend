@@ -59,10 +59,13 @@ export async function getAllergyRegistry(req: Request, res: Response, next: Next
     if (patient_id) { where += ` AND ar.patient_id = $${p}`; params.push(Number(patient_id)); p++; }
     const { rows } = await query(
       `SELECT ar.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number, pa.national_id,
-              mt.med_name, mt.med_generic_name, mt.med_medical_category
+              mt.med_name, mt.med_generic_name, mt.med_medical_category,
+              COALESCE(rpu.firstname_th || ' ' || rpu.lastname_th, rau.email, '') AS recorded_by_name
        FROM ${SCHEMA}.allergy_registry ar
        JOIN ${SCHEMA}.patient pa ON pa.patient_id = ar.patient_id
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = ar.med_id
+       LEFT JOIN public.profiles rpu ON rpu.id = ar.recorded_by
+       LEFT JOIN auth.users     rau ON rau.id = ar.recorded_by
        ${where} ORDER BY ar.created_at DESC LIMIT $${p} OFFSET $${p + 1}`, [...params, limit, offset]);
     const cr = await query(`SELECT COUNT(*) AS total FROM ${SCHEMA}.allergy_registry ar JOIN ${SCHEMA}.patient pa ON pa.patient_id=ar.patient_id JOIN ${SCHEMA}.med_table mt ON mt.med_id=ar.med_id ${where}`, params);
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
@@ -111,10 +114,13 @@ export async function getMedInteractions(req: Request, res: Response, next: Next
     }
     const { rows } = await query(
       `SELECT mi.*, mt1.med_name AS drug1_name, mt2.med_name AS drug2_name,
-              mt1.med_generic_name AS drug1_generic, mt2.med_generic_name AS drug2_generic
+              mt1.med_generic_name AS drug1_generic, mt2.med_generic_name AS drug2_generic,
+              COALESCE(rpu.firstname_th || ' ' || rpu.lastname_th, rau.email, '') AS recorded_by_name
        FROM ${SCHEMA}.med_interaction mi
        JOIN ${SCHEMA}.med_table mt1 ON mt1.med_id = mi.med_id_1
        JOIN ${SCHEMA}.med_table mt2 ON mt2.med_id = mi.med_id_2
+       LEFT JOIN public.profiles rpu ON rpu.id = mi.recorded_by
+       LEFT JOIN auth.users     rau ON rau.id = mi.recorded_by
        ${where} ORDER BY mi.severity DESC, mt1.med_name LIMIT $${p} OFFSET $${p + 1}`, [...params, limit, offset]);
     const cr = await query(`SELECT COUNT(*) AS total FROM ${SCHEMA}.med_interaction mi JOIN ${SCHEMA}.med_table mt1 ON mt1.med_id=mi.med_id_1 JOIN ${SCHEMA}.med_table mt2 ON mt2.med_id=mi.med_id_2 ${where}`, params);
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
@@ -268,12 +274,15 @@ export async function getMedError(req: Request, res: Response, next: NextFunctio
     const { rows } = await query(
       `SELECT em.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number,
               mt.med_name, mt.med_generic_name,
-              COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS doctor_name
+              COALESCE(pu.firstname_th  || ' ' || pu.lastname_th,  au.email,  '') AS doctor_name,
+              COALESCE(rpu.firstname_th || ' ' || rpu.lastname_th, rau.email, '') AS recorded_by_name
        FROM ${SCHEMA}.error_medication em
        JOIN ${SCHEMA}.patient pa ON pa.patient_id = em.patient_id
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = em.med_id
-       LEFT JOIN public.profiles pu ON pu.id = em.doctor_id
-       LEFT JOIN auth.users     au ON au.id = em.doctor_id
+       LEFT JOIN public.profiles pu  ON pu.id  = em.doctor_id
+       LEFT JOIN auth.users     au  ON au.id  = em.doctor_id
+       LEFT JOIN public.profiles rpu ON rpu.id = em.recorded_by
+       LEFT JOIN auth.users     rau ON rau.id = em.recorded_by
        ${where} ORDER BY em.time DESC LIMIT $${p} OFFSET $${p + 1}`, [...params, limit, offset]);
     const cr = await query(
       `SELECT COUNT(*) AS total FROM ${SCHEMA}.error_medication em
@@ -378,16 +387,16 @@ export async function deleteMedRegistry(req: Request, res: Response, next: NextF
 
 export async function createAllergy(req: Request, res: Response, next: NextFunction) {
   try {
-    const { med_id, patient_id, symptoms, description, severity, reported_at } = req.body;
+    const { med_id, patient_id, symptoms, description, severity, reported_at, recorded_by } = req.body;
     if (!symptoms) throw new AppError('symptoms จำเป็น', 400);
     const resolvedMed = await resolveMedId(med_id);
     const resolvedPatient = await resolvePatientId(patient_id);
     if (!resolvedMed) throw new AppError('ไม่พบยา (med_id/ชื่อยา)', 400);
     if (!resolvedPatient) throw new AppError('ไม่พบผู้ป่วย (patient_id/HN)', 400);
     const { rows } = await query(
-      `INSERT INTO ${SCHEMA}.allergy_registry (med_id, patient_id, symptoms, description, severity, reported_at)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [resolvedMed, resolvedPatient, symptoms, description, severity || 'mild', reported_at || null]
+      `INSERT INTO ${SCHEMA}.allergy_registry (med_id, patient_id, symptoms, description, severity, reported_at, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [resolvedMed, resolvedPatient, symptoms, description, severity || 'mild', reported_at || null, recorded_by || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -396,14 +405,14 @@ export async function createAllergy(req: Request, res: Response, next: NextFunct
 export async function updateAllergy(req: Request, res: Response, next: NextFunction) {
   try {
     const { allr_id } = req.params;
-    const { symptoms, description, severity, reported_at } = req.body;
+    const { symptoms, description, severity, reported_at, recorded_by } = req.body;
     const { rows } = await query(
       `UPDATE ${SCHEMA}.allergy_registry
        SET symptoms = COALESCE($1, symptoms), description = COALESCE($2, description),
            severity = COALESCE($3, severity), reported_at = COALESCE($4, reported_at),
-           updated_at = NOW()
-       WHERE allr_id = $5 RETURNING *`,
-      [symptoms, description, severity, reported_at, allr_id]
+           recorded_by = COALESCE($5, recorded_by), updated_at = NOW()
+       WHERE allr_id = $6 RETURNING *`,
+      [symptoms, description, severity, reported_at, recorded_by || null, allr_id]
     );
     if (!rows.length) throw new AppError('ไม่พบรายการ', 404);
     res.json(rows[0]);
@@ -475,14 +484,14 @@ export async function deleteAdr(req: Request, res: Response, next: NextFunction)
 
 export async function createInteraction(req: Request, res: Response, next: NextFunction) {
   try {
-    const { med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type } = req.body;
+    const { med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type, recorded_by } = req.body;
     if (!med_id_1 || !med_id_2 || !description) throw new AppError('med_id_1, med_id_2, description จำเป็น', 400);
     if (med_id_1 === med_id_2) throw new AppError('ไม่สามารถเพิ่มปฏิกิริยากับยาชนิดเดียวกัน', 400);
     const { rows } = await query(
       `INSERT INTO ${SCHEMA}.med_interaction
-         (med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type || 'unknown']
+         (med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type || 'unknown', recorded_by || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -491,15 +500,15 @@ export async function createInteraction(req: Request, res: Response, next: NextF
 export async function updateInteraction(req: Request, res: Response, next: NextFunction) {
   try {
     const { interaction_id } = req.params;
-    const { description, severity, evidence_level, source_reference, interaction_type, is_active } = req.body;
+    const { description, severity, evidence_level, source_reference, interaction_type, is_active, recorded_by } = req.body;
     const { rows } = await query(
       `UPDATE ${SCHEMA}.med_interaction
        SET description = COALESCE($1, description), severity = COALESCE($2, severity),
            evidence_level = COALESCE($3, evidence_level), source_reference = COALESCE($4, source_reference),
            interaction_type = COALESCE($5, interaction_type), is_active = COALESCE($6, is_active),
-           updated_at = NOW()
-       WHERE interaction_id = $7 RETURNING *`,
-      [description, severity, evidence_level, source_reference, interaction_type, is_active, interaction_id]
+           recorded_by = COALESCE($7, recorded_by), updated_at = NOW()
+       WHERE interaction_id = $8 RETURNING *`,
+      [description, severity, evidence_level, source_reference, interaction_type, is_active, recorded_by || null, interaction_id]
     );
     if (!rows.length) throw new AppError('ไม่พบรายการ', 404);
     res.json(rows[0]);
@@ -718,7 +727,7 @@ export async function createDelivery(req: Request, res: Response, next: NextFunc
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { patient_id, delivery_method, receiver_name, receiver_phone,
       address, note, status, medicine_list,
@@ -774,7 +783,7 @@ export async function updateDelivery(req: Request, res: Response, next: NextFunc
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { delivery_id } = req.params;
     const { delivery_method, receiver_name, receiver_phone, address, note, status, medicine_list,
@@ -885,7 +894,7 @@ export async function deleteDelivery(req: Request, res: Response, next: NextFunc
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { delivery_id } = req.params;
     const { rows } = await client.query(
@@ -942,7 +951,7 @@ export async function updateOverdue(req: Request, res: Response, next: NextFunct
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { overdue_id } = req.params;
     const { dispense_status, quantity, med_id, patient_id, doctor_id, med_sid } = req.body;
@@ -972,10 +981,11 @@ export async function updateOverdue(req: Request, res: Response, next: NextFunct
       if (targetQty > balBefore)
         throw new AppError(`สต็อกไม่พอ (มี ${balBefore}, ต้องการ ${targetQty})`, 400);
 
-      // sync lot ถ้า med_stock_lots ไม่ครบ (เช่น สต็อกถูกเพิ่มโดยตรง ไม่ผ่านระบบ lot)
+      // sync lot ถ้า med_stock_lots (เฉพาะที่ยังไม่หมดอายุ) ไม่ครบ
       const { rows: lotRows } = await client.query(
         `SELECT COALESCE(SUM(quantity), 0)::int AS lot_total
-         FROM ${SCHEMA}.med_stock_lots WHERE med_sid = $1`,
+         FROM ${SCHEMA}.med_stock_lots 
+         WHERE med_sid = $1 AND (exp_date IS NULL OR exp_date >= CURRENT_DATE)`,
         [targetMedSid]
       );
       const lotTotal = parseInt(lotRows[0].lot_total);

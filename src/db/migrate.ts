@@ -245,6 +245,11 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'counter'`,
   // queue_number: หมายเลขคิวที่ผูกกับใบสั่งยานี้ (บันทึกหลังจ่ายยา)
   `ALTER TABLE ${SCHEMA}.prescriptions ADD COLUMN IF NOT EXISTS queue_number VARCHAR(10)`,
+
+  // ── recorded_by: บันทึกผู้ที่บันทึกข้อมูลในทะเบียนต่างๆ ────────────────────────
+  `ALTER TABLE ${SCHEMA}.allergy_registry ADD COLUMN IF NOT EXISTS recorded_by UUID`,
+  `ALTER TABLE ${SCHEMA}.med_interaction  ADD COLUMN IF NOT EXISTS recorded_by UUID`,
+  `ALTER TABLE ${SCHEMA}.error_medication ADD COLUMN IF NOT EXISTS recorded_by UUID`,
 ];
 
 async function migrate() {

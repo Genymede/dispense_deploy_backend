@@ -188,12 +188,15 @@ export async function reportMedError(req: Request, res: Response, next: NextFunc
     const { rows } = await query(
       `SELECT em.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number,
               mt.med_name,
-              COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS doctor_name
+              COALESCE(pu.firstname_th  || ' ' || pu.lastname_th,  au.email,  '') AS doctor_name,
+              COALESCE(rpu.firstname_th || ' ' || rpu.lastname_th, rau.email, '') AS recorded_by_name
        FROM ${SCHEMA}.error_medication em
        JOIN ${SCHEMA}.patient pa ON pa.patient_id=em.patient_id
        JOIN ${SCHEMA}.med_table mt ON mt.med_id=em.med_id
-       LEFT JOIN public.profiles pu ON pu.id=em.doctor_id
-       LEFT JOIN auth.users     au ON au.id=em.doctor_id
+       LEFT JOIN public.profiles pu  ON pu.id  = em.doctor_id
+       LEFT JOIN auth.users     au  ON au.id  = em.doctor_id
+       LEFT JOIN public.profiles rpu ON rpu.id = em.recorded_by
+       LEFT JOIN auth.users     rau ON rau.id = em.recorded_by
        ${w} ORDER BY em.time DESC LIMIT $${p} OFFSET $${p+1}`, [...params, limit, offset]);
     const cr = await query(`SELECT COUNT(*) AS total FROM ${SCHEMA}.error_medication em JOIN ${SCHEMA}.patient pa ON pa.patient_id=em.patient_id JOIN ${SCHEMA}.med_table mt ON mt.med_id=em.med_id ${w}`, params);
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
@@ -264,15 +267,82 @@ export async function reportOverdueMed(req: Request, res: Response, next: NextFu
   } catch (err) { next(err); }
 }
 
-// ── Cut-off Period ────────────────────────────────────────────────────────────
+// ── Sub-warehouse list ───────────────────────────────────────────────────────
+export async function getSubWarehouses(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { rows } = await query(
+      `SELECT sub_warehouse_id, name, description, is_active
+       FROM ${SCHEMA}.sub_warehouse
+       ORDER BY name`);
+    res.json({ data: rows, total: rows.length });
+  } catch (err) { next(err); }
+}
+
+// ── Cut-off Period CRUD ────────────────────────────────────────────────────────
 export async function reportCutOff(req: Request, res: Response, next: NextFunction) {
   try {
     const { rows } = await query(
       `SELECT mcp.*, mcp.med_period_id AS cut_off_period_id, sw.name AS warehouse_name
        FROM ${SCHEMA}.med_cut_off_period mcp
        JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id=mcp.sub_warehouse_id
-       ORDER BY mcp.period_month, mcp.period_day`);
+       ORDER BY mcp.period_month, mcp.period_day, mcp.period_time_h, mcp.period_time_m`);
     res.json({ data: rows, total: rows.length });
+  } catch (err) { next(err); }
+}
+
+export async function createCutOff(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { sub_warehouse_id, period_month, period_day, period_time_h, period_time_m, is_active = true } = req.body;
+    if (!sub_warehouse_id || !period_month || !period_day || period_time_h === undefined || period_time_m === undefined)
+      throw new AppError('กรุณากรอกข้อมูลให้ครบ', 400);
+    const { rows } = await query(
+      `INSERT INTO ${SCHEMA}.med_cut_off_period
+         (sub_warehouse_id, period_month, period_day, period_time_h, period_time_m, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [sub_warehouse_id, period_month, period_day, period_time_h, period_time_m, is_active]
+    );
+    // fetch joined name
+    const joined = await query(
+      `SELECT mcp.*, sw.name AS warehouse_name FROM ${SCHEMA}.med_cut_off_period mcp
+       JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id=mcp.sub_warehouse_id
+       WHERE mcp.med_period_id=$1`, [rows[0].med_period_id]);
+    res.status(201).json({ data: joined.rows[0] });
+  } catch (err) { next(err); }
+}
+
+export async function updateCutOff(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    const { period_month, period_day, period_time_h, period_time_m, is_active } = req.body;
+    const { rows } = await query(
+      `UPDATE ${SCHEMA}.med_cut_off_period
+       SET period_month  = COALESCE($2, period_month),
+           period_day    = COALESCE($3, period_day),
+           period_time_h = COALESCE($4, period_time_h),
+           period_time_m = COALESCE($5, period_time_m),
+           is_active     = COALESCE($6, is_active),
+           updated_at    = NOW()
+       WHERE med_period_id = $1
+       RETURNING *`,
+      [id, period_month ?? null, period_day ?? null, period_time_h ?? null, period_time_m ?? null, is_active ?? null]
+    );
+    if (!rows.length) throw new AppError('ไม่พบรายการ', 404);
+    const joined = await query(
+      `SELECT mcp.*, sw.name AS warehouse_name FROM ${SCHEMA}.med_cut_off_period mcp
+       JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id=mcp.sub_warehouse_id
+       WHERE mcp.med_period_id=$1`, [id]);
+    res.json({ data: joined.rows[0] });
+  } catch (err) { next(err); }
+}
+
+export async function deleteCutOff(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    const { rowCount } = await query(
+      `DELETE FROM ${SCHEMA}.med_cut_off_period WHERE med_period_id=$1`, [id]);
+    if (!rowCount) throw new AppError('ไม่พบรายการ', 404);
+    res.json({ message: 'ลบเรียบร้อย' });
   } catch (err) { next(err); }
 }
 
