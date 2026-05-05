@@ -33,7 +33,7 @@ export async function getDrugs(req: Request, res: Response, next: NextFunction) 
       where += ` AND COALESCE(lc.lot_stock, 0) > 0 AND ms.min_quantity IS NOT NULL AND COALESCE(lc.lot_stock, 0) < ms.min_quantity`;
     }
     if (near_expiry === '1') {
-      where += ` AND ms.exp_date IS NOT NULL AND ms.exp_date BETWEEN NOW() AND NOW() + INTERVAL '30 days' AND ms.is_expired = false`;
+      where += ` AND lc.nearest_valid_lot_exp IS NOT NULL AND lc.nearest_valid_lot_exp BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'`;
     }
     if (expired === '1') {
       where += ` AND (ms.is_expired = true OR ms.exp_date < NOW() OR EXISTS (SELECT 1 FROM ${SCHEMA}.med_stock_lots l WHERE l.med_sid = ms.med_sid AND l.exp_date < CURRENT_DATE))`;
@@ -75,7 +75,8 @@ export async function getDrugs(req: Request, res: Response, next: NextFunction) 
         mt.med_mfg              AS registered_mfg,
         COALESCE(lc.lot_count, 0) AS lot_count,
         COALESCE(lc.expired_lot_count, 0) AS expired_lot_count,
-        lc.nearest_lot_exp
+        lc.nearest_lot_exp,
+        lc.nearest_valid_lot_exp
       FROM ${SCHEMA}.med_subwarehouse ms
       JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
       LEFT JOIN (
@@ -83,6 +84,7 @@ export async function getDrugs(req: Request, res: Response, next: NextFunction) 
           med_sid,
           COUNT(*) FILTER (WHERE (exp_date IS NULL OR exp_date >= CURRENT_DATE) AND quantity > 0)::int AS lot_count,
           MIN(exp_date) FILTER (WHERE quantity > 0) AS nearest_lot_exp,
+          MIN(exp_date) FILTER (WHERE exp_date >= CURRENT_DATE AND quantity > 0) AS nearest_valid_lot_exp,
           COUNT(*) FILTER (WHERE exp_date < CURRENT_DATE AND quantity > 0)::int AS expired_lot_count,
           COALESCE(SUM(quantity) FILTER (WHERE exp_date IS NULL OR exp_date >= CURRENT_DATE), 0)::int AS lot_stock
         FROM ${SCHEMA}.med_stock_lots
