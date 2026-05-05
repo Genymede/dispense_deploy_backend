@@ -18,8 +18,9 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
         WHERE med_quantity > 0 AND min_quantity IS NOT NULL
           AND med_quantity < min_quantity AND is_expired = false`),
       query<{ cnt: string }>(`
-        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-        WHERE (is_expired = true OR exp_date < NOW()) AND med_quantity > 0`),
+        SELECT COUNT(DISTINCT l.med_sid) AS cnt
+        FROM ${SCHEMA}.med_stock_lots l
+        WHERE l.exp_date < CURRENT_DATE AND l.quantity > 0`),
       query<{ cnt: string }>(`
         SELECT COUNT(*) AS cnt FROM ${SCHEMA}.prescriptions
         WHERE status = 'dispensed' AND DATE(dispensed_at) = $1`, [today]),
@@ -45,19 +46,24 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
 
     const [nearExpiry, nearExpiryTop, recentTx] = await Promise.all([
       query<{ cnt: string }>(`
-        SELECT COUNT(*) AS cnt FROM ${SCHEMA}.med_subwarehouse
-        WHERE exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
-          AND is_expired = false AND med_quantity > 0`, [nearExpiryDays]),
+        SELECT COUNT(DISTINCT l.med_sid) AS cnt
+        FROM ${SCHEMA}.med_stock_lots l
+        WHERE l.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
+          AND l.quantity > 0`, [nearExpiryDays]),
       query(`
-        SELECT ms.med_sid,
+        SELECT
+          ms.med_sid,
           COALESCE(ms.med_showname, mt.med_name) AS drug_name,
-          ms.exp_date, ms.med_quantity,
-          (ms.exp_date::date - CURRENT_DATE) AS days_left
-        FROM ${SCHEMA}.med_subwarehouse ms
+          MIN(l.exp_date) AS exp_date,
+          SUM(l.quantity) AS med_quantity,
+          MIN(l.exp_date::date - CURRENT_DATE) AS days_left
+        FROM ${SCHEMA}.med_stock_lots l
+        JOIN ${SCHEMA}.med_subwarehouse ms ON ms.med_sid = l.med_sid
         JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-        WHERE ms.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
-          AND ms.is_expired = false AND ms.med_quantity > 0
-        ORDER BY ms.exp_date ASC LIMIT 6`, [nearExpiryDays]),
+        WHERE l.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
+          AND l.quantity > 0
+        GROUP BY ms.med_sid, ms.med_showname, mt.med_name
+        ORDER BY MIN(l.exp_date) ASC LIMIT 6`, [nearExpiryDays]),
       query(`
         SELECT st.tx_id, st.tx_type, st.quantity, st.created_at,
           COALESCE(ms.med_showname, mt.med_name) AS drug_name
@@ -164,18 +170,21 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
       }
     }
 
-    // Near expiry
+    // Near expiry (ตรวจรายล็อตและระบุเลขล็อต)
     if (enabled('alert_enabled_near_expiry')) {
       const { rows: nearRows } = await query(
         `SELECT
-           ms.med_sid, ms.exp_date,
+           ms.med_sid,
            COALESCE(ms.med_showname, mt.med_name) AS drug_name,
-           (ms.exp_date::date - CURRENT_DATE) AS days_left
-         FROM ${SCHEMA}.med_subwarehouse ms
+           STRING_AGG(COALESCE(l.lot_number, 'ไม่ระบุ') || ' (ใน ' || (l.exp_date::date - CURRENT_DATE) || ' วัน)', ', ') AS lot_details,
+           MIN(l.exp_date::date - CURRENT_DATE) AS min_days_left
+         FROM ${SCHEMA}.med_stock_lots l
+         JOIN ${SCHEMA}.med_subwarehouse ms ON ms.med_sid = l.med_sid
          JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-         WHERE ms.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
-           AND ms.is_expired = false AND ms.med_quantity > 0
-         ORDER BY ms.exp_date ASC
+         WHERE l.exp_date BETWEEN NOW() AND NOW() + ($1 || ' days')::INTERVAL
+           AND l.quantity > 0
+         GROUP BY ms.med_sid, ms.med_showname, mt.med_name
+         ORDER BY min_days_left ASC
          LIMIT 50`,
         [nearExpiryDays]
       );
@@ -184,23 +193,26 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
           alert_type: 'near_expiry',
           med_sid: r.med_sid,
           drug_name: r.drug_name,
-          message: `ยาจะหมดอายุใน ${r.days_left} วัน (${new Date(r.exp_date).toLocaleDateString('th-TH')})`,
-          severity: r.days_left <= 7 ? 'critical' : 'warning',
+          message: `พบยาใกล้หมดอายุ - ล็อต: ${r.lot_details}`,
+          severity: r.min_days_left <= 7 ? 'critical' : 'warning',
         });
       }
     }
 
-    // Expired
+    // Expired (ตรวจรายล็อตเพื่อให้ครอบคลุมกรณีมีของดีผสมอยู่)
     if (enabled('alert_enabled_expired')) {
       const { rows: expRows } = await query(
         `SELECT
-           ms.med_sid, ms.exp_date, ms.med_quantity,
-           COALESCE(ms.med_showname, mt.med_name) AS drug_name
-         FROM ${SCHEMA}.med_subwarehouse ms
+           ms.med_sid,
+           COALESCE(ms.med_showname, mt.med_name) AS drug_name,
+           STRING_AGG(COALESCE(l.lot_number, 'ไม่ระบุ'), ', ') AS lot_numbers,
+           SUM(l.quantity) AS total_expired_qty
+         FROM ${SCHEMA}.med_stock_lots l
+         JOIN ${SCHEMA}.med_subwarehouse ms ON ms.med_sid = l.med_sid
          JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
-         WHERE (ms.is_expired = true OR ms.exp_date < NOW())
-           AND ms.med_quantity > 0
-         ORDER BY ms.exp_date ASC
+         WHERE l.exp_date < CURRENT_DATE AND l.quantity > 0
+         GROUP BY ms.med_sid, ms.med_showname, mt.med_name
+         ORDER BY ms.med_showname, mt.med_name
          LIMIT 50`
       );
       for (const r of expRows) {
@@ -208,7 +220,7 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
           alert_type: 'expired',
           med_sid: r.med_sid,
           drug_name: r.drug_name,
-          message: `ยาหมดอายุแล้ว คงเหลือ ${r.med_quantity} หน่วย`,
+          message: `พบยาหมดอายุ (ล็อต: ${r.lot_numbers}) คงเหลือรวม ${r.total_expired_qty} หน่วย`,
           severity: 'critical',
         });
       }
