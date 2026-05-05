@@ -56,7 +56,11 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
           COALESCE(ms.med_showname, mt.med_name) AS drug_name,
           MIN(l.exp_date) AS exp_date,
           SUM(l.quantity) AS med_quantity,
-          MIN(l.exp_date::date - CURRENT_DATE) AS days_left
+          MIN(l.exp_date::date - CURRENT_DATE) AS days_left,
+          STRING_AGG(
+            COALESCE(l.lot_number, 'ไม่ระบุ') || ' (' || (l.exp_date::date - CURRENT_DATE) || 'วัน/' || l.quantity || 'หน่วย)',
+            ', ' ORDER BY l.exp_date ASC
+          ) AS lot_details
         FROM ${SCHEMA}.med_stock_lots l
         JOIN ${SCHEMA}.med_subwarehouse ms ON ms.med_sid = l.med_sid
         JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
