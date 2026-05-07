@@ -17,12 +17,18 @@ export async function recalcTotal(med_sid: number, client: any): Promise<number>
   const { rows } = await client.query(
     `UPDATE ${SCHEMA}.med_subwarehouse
      SET med_quantity = COALESCE(
-       (SELECT SUM(quantity) FROM ${SCHEMA}.med_stock_lots WHERE med_sid = $1), 0
+       (SELECT SUM(quantity) FROM ${SCHEMA}.med_stock_lots 
+        WHERE med_sid = $1 AND (exp_date IS NULL OR exp_date >= CURRENT_DATE) AND quantity > 0), 0
      ),
      exp_date = (
        SELECT MIN(exp_date) FROM ${SCHEMA}.med_stock_lots
-       WHERE med_sid = $1 AND exp_date IS NOT NULL
+       WHERE med_sid = $1 AND quantity > 0
      ),
+     is_expired = CASE 
+       WHEN EXISTS (SELECT 1 FROM ${SCHEMA}.med_stock_lots WHERE med_sid = $1 AND (exp_date IS NULL OR exp_date >= CURRENT_DATE) AND quantity > 0) THEN false
+       WHEN EXISTS (SELECT 1 FROM ${SCHEMA}.med_stock_lots WHERE med_sid = $1 AND quantity > 0) THEN true
+       ELSE false -- ถ้าไม่มีของเลย ไม่ถือว่าหมดอายุ (ถือว่าของขาด)
+     END,
      updated_at = NOW()
      WHERE med_sid = $1
      RETURNING med_quantity`,
@@ -39,6 +45,7 @@ export async function deductFefo(
     `SELECT lot_id, lot_number, quantity, exp_date
      FROM ${SCHEMA}.med_stock_lots
      WHERE med_sid = $1
+       AND (exp_date IS NULL OR exp_date >= CURRENT_DATE)
      ORDER BY exp_date ASC NULLS LAST, lot_id ASC
      FOR UPDATE`,
     [med_sid]
@@ -49,8 +56,8 @@ export async function deductFefo(
 
   for (const lot of lots) {
     if (remaining <= 0) break;
-    const take    = Math.min(remaining, lot.quantity);
-    const newQty  = lot.quantity - take;
+    const take = Math.min(remaining, lot.quantity);
+    const newQty = lot.quantity - take;
     if (newQty === 0) {
       await client.query(`DELETE FROM ${SCHEMA}.med_stock_lots WHERE lot_id = $1`, [lot.lot_id]);
     } else {
@@ -83,11 +90,11 @@ async function recordTx(client: any, data: {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      RETURNING *`,
     [data.med_sid, data.med_id, data.tx_type, data.quantity,
-     data.balance_before, data.balance_after,
-     data.lot_number, data.expiry_date, data.mfg_date ?? null,
-     data.reference_no, data.prescription_no, data.ward_from,
-     data.performed_by, data.note,
-     data.approval_status ?? 'approved', data.source_type ?? null]
+    data.balance_before, data.balance_after,
+    data.lot_number, data.expiry_date, data.mfg_date ?? null,
+    data.reference_no, data.prescription_no, data.ward_from,
+    data.performed_by, data.note,
+    data.approval_status ?? 'approved', data.source_type ?? null]
   );
   return rows[0];
 }
@@ -100,9 +107,10 @@ interface ReceiveItem {
   med_name?: string; med_generic_name?: string; med_counting_unit?: string;
   med_medical_category?: string; packaging_type?: string;
   min_quantity?: number; max_quantity?: number;
+  cost_price?: number; unit_price?: number;
 }
 interface ReceiveShared {
-  reference_no?: string; performed_by?: number | null; source_type: string;
+  reference_no?: string; performed_by?: string | null; source_type: string;
 }
 
 async function processOneReceive(client: any, item: ReceiveItem, shared: ReceiveShared) {
@@ -111,6 +119,7 @@ async function processOneReceive(client: any, item: ReceiveItem, shared: Receive
     note, drug_code, image_url, med_name, med_generic_name,
     med_counting_unit, med_medical_category, packaging_type,
     min_quantity: min_qty, max_quantity: max_qty,
+    cost_price, unit_price,
   } = item;
   const { reference_no, performed_by, source_type } = shared;
 
@@ -141,13 +150,13 @@ async function processOneReceive(client: any, item: ReceiveItem, shared: Receive
   let { rows: drugRows } = await (
     resolvedMedId
       ? client.query(
-          `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_id = $1 FOR UPDATE`,
-          [resolvedMedId]
-        )
+        `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_id = $1 FOR UPDATE`,
+        [resolvedMedId]
+      )
       : client.query(
-          `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_sid = $1 FOR UPDATE`,
-          [med_sid]
-        )
+        `SELECT med_sid, med_id, med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_sid = $1 FOR UPDATE`,
+        [med_sid]
+      )
   );
 
   // Auto-create: ยาไม่มีใน subwarehouse → สร้างอัตโนมัติ
@@ -170,7 +179,7 @@ async function processOneReceive(client: any, item: ReceiveItem, shared: Receive
              (med_name, med_generic_name, med_counting_unit, med_medical_category)
            VALUES ($1, $2, $3, $4) RETURNING med_id`,
           [med_name, med_generic_name || null,
-           med_counting_unit || 'หน่วย', med_medical_category || null]
+            med_counting_unit || 'หน่วย', med_medical_category || null]
         );
         medId = newMt[0].med_id;
       }
@@ -189,13 +198,13 @@ async function processOneReceive(client: any, item: ReceiveItem, shared: Receive
        FROM ${SCHEMA}.med_table mt WHERE mt.med_id = $1
        RETURNING med_sid, med_id, med_quantity`,
       [medId, drug_code || null, image_url || null,
-       packaging_type || 'เม็ด', min_qty || null, max_qty || null]
+        packaging_type || 'เม็ด', min_qty || null, max_qty || null]
     );
     drugRows = newSub;
     wasAutoCreated = true;
   }
 
-  const drug      = drugRows[0];
+  const drug = drugRows[0];
   const balBefore = parseInt(drug.med_quantity);
 
   // Lot deduplication
@@ -209,22 +218,24 @@ async function processOneReceive(client: any, item: ReceiveItem, shared: Receive
     if (existingLot.length) {
       await client.query(
         `UPDATE ${SCHEMA}.med_stock_lots SET quantity = quantity + $1, updated_at = NOW() WHERE lot_id = $2`,
-        [parseInt(quantity), existingLot[0].lot_id]
+        [quantity, existingLot[0].lot_id]
       );
       newLotId = existingLot[0].lot_id;
     } else {
       const { rows: lotRows } = await client.query(
-        `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
-         VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active') RETURNING lot_id`,
-        [drug.med_sid, lot_number, parseInt(quantity), expiry_date || null, mfg_date || null, note || null]
+        `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, mfg_date, note, status, cost_price, unit_price)
+         VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active', $7, $8) RETURNING lot_id`,
+        [drug.med_sid, lot_number, quantity, expiry_date || null, mfg_date || null, note || null,
+          cost_price ?? null, unit_price ?? null]
       );
       newLotId = lotRows[0].lot_id;
     }
   } else {
     const { rows: lotRows } = await client.query(
-      `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, mfg_date, note, status)
-       VALUES ($1, NULL, $2, $3::date, $4::date, $5, 'active') RETURNING lot_id`,
-      [drug.med_sid, parseInt(quantity), expiry_date || null, mfg_date || null, note || null]
+      `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, exp_date, mfg_date, note, status, cost_price, unit_price)
+       VALUES ($1, NULL, $2, $3::date, $4::date, $5, 'active', $6, $7) RETURNING lot_id`,
+      [drug.med_sid, quantity, expiry_date || null, mfg_date || null, note || null,
+        cost_price ?? null, unit_price ?? null]
     );
     newLotId = lotRows[0].lot_id;
   }
@@ -248,9 +259,21 @@ async function processOneReceive(client: any, item: ReceiveItem, shared: Receive
     [drug.med_sid, drug_code || null, image_url || null]
   );
 
+  // ถ้ากรอกราคามาพร้อม lot → override ราคาใน subwarehouse ทันที
+  if (cost_price != null || unit_price != null) {
+    await client.query(
+      `UPDATE ${SCHEMA}.med_subwarehouse
+       SET cost_price = COALESCE($2, cost_price),
+           unit_price = COALESCE($3, unit_price),
+           updated_at = NOW()
+       WHERE med_sid = $1`,
+      [drug.med_sid, cost_price ?? null, unit_price ?? null]
+    );
+  }
+
   const tx = await recordTx(client, {
     med_sid: drug.med_sid, med_id: drug.med_id,
-    tx_type: 'in', quantity: parseInt(quantity),
+    tx_type: 'in', quantity: quantity,
     balance_before: balBefore, balance_after: balAfter,
     lot_number, expiry_date, mfg_date, reference_no,
     performed_by: performed_by ?? undefined, note,
@@ -286,7 +309,7 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
       : ((req as any).currentUser?.id ?? null);
 
     const shared: ReceiveShared = { reference_no, performed_by: resolvedPerformer, source_type };
-    const list: ReceiveItem[]   = isBatch ? items : [singleItem];
+    const list: ReceiveItem[] = isBatch ? items : [singleItem];
 
     const results = [];
     for (let i = 0; i < list.length; i++) {
@@ -321,7 +344,7 @@ export async function receiveStock(req: Request, res: Response, next: NextFuncti
       });
     }
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) { }
     next(err);
   } finally { client.release(); }
 }
@@ -341,7 +364,7 @@ export async function getTransactions(req: Request, res: Response, next: NextFun
     if (med_sid) { where += ` AND st.med_sid = $${p}`; params.push(Number(med_sid)); p++; }
     if (tx_type) { where += ` AND st.tx_type = $${p}`; params.push(tx_type); p++; }
     if (date_from) { where += ` AND st.created_at >= $${p}`; params.push(date_from); p++; }
-    if (date_to)   { where += ` AND st.created_at < $${p}::date + 1`; params.push(date_to); p++; }
+    if (date_to) { where += ` AND st.created_at < $${p}::date + 1`; params.push(date_to); p++; }
 
     const offset = (Number(page) - 1) * Number(limit);
 
@@ -406,7 +429,7 @@ export async function stockIn(req: Request, res: Response, next: NextFunction) {
     );
     if (!drugRows.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
 
-    const drug      = drugRows[0];
+    const drug = drugRows[0];
     const balBefore = parseInt(drug.med_quantity);
 
     // สร้าง transaction สถานะ pending — ยังไม่แตะสต็อก รอคลังหลักอนุมัติ
@@ -422,7 +445,7 @@ export async function stockIn(req: Request, res: Response, next: NextFunction) {
     await client.query('COMMIT');
     res.status(201).json(tx);
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) { }
     next(err);
   } finally { client.release(); }
 }
@@ -477,7 +500,7 @@ export async function approveStockIn(req: Request, res: Response, next: NextFunc
        VALUES ($1, $2, $3, $4::date, $5::date, $6, 'active')
        RETURNING lot_id`,
       [tx.med_sid, tx.lot_number || null, tx.quantity,
-       tx.expiry_date || null, tx.mfg_date || null, tx.note || null]
+      tx.expiry_date || null, tx.mfg_date || null, tx.note || null]
     );
     const newLotId = lotRows[0].lot_id;
     const balAfter = await recalcTotal(parseInt(tx.med_sid), client);
@@ -499,7 +522,7 @@ export async function approveStockIn(req: Request, res: Response, next: NextFunc
     await client.query('COMMIT');
     res.json(updated[0]);
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) { }
     next(err);
   } finally { client.release(); }
 }
@@ -566,7 +589,7 @@ export async function adjustStock(req: Request, res: Response, next: NextFunctio
     await client.query('COMMIT');
     res.status(201).json(tx);
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) { }
     next(err);
   } finally { client.release(); }
 }
@@ -594,7 +617,7 @@ export async function returnStock(req: Request, res: Response, next: NextFunctio
     await client.query(
       `INSERT INTO ${SCHEMA}.med_stock_lots (med_sid, lot_number, quantity, note)
        VALUES ($1, 'RET-' || to_char(NOW(), 'YYYYMMDD-HH24MISS'), $2, $3)`,
-      [med_sid, parseInt(quantity), note || 'คืนยา']
+      [med_sid, Number(quantity), note || 'คืนยา']
     );
 
     const balAfter = await recalcTotal(parseInt(med_sid), client);
@@ -609,7 +632,7 @@ export async function returnStock(req: Request, res: Response, next: NextFunctio
     await client.query('COMMIT');
     res.status(201).json(tx);
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) { }
     next(err);
   } finally { client.release(); }
 }
@@ -654,7 +677,7 @@ export async function markExpired(req: Request, res: Response, next: NextFunctio
       }
     } else {
       // FEFO
-      await deductFefo(parseInt(med_sid), parseInt(quantity), client);
+      await deductFefo(Number(med_sid), Number(quantity), client);
     }
 
     const balAfter = await recalcTotal(parseInt(med_sid), client);
@@ -682,7 +705,7 @@ export async function markExpired(req: Request, res: Response, next: NextFunctio
     await client.query('COMMIT');
     res.status(201).json(tx);
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) { }
     next(err);
   } finally { client.release(); }
 }
@@ -792,12 +815,17 @@ export async function getRequisitions(req: Request, res: Response, next: NextFun
          rh.note,
          rh.created_at,
          rh.updated_at,
+         -- ดึงชื่อคนขอเบิก
          COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS requester_name,
+         
+         -- [เพิ่มใหม่] ดึงชื่อคนอนุมัติ
+         COALESCE(p_app.firstname_th || ' ' || p_app.lastname_th, a_app.email, '') AS approver_name,
+         
          COUNT(ri.id)::integer AS item_count,
          COALESCE(SUM(ri.req_qty), 0)::integer AS total_req_qty,
          COALESCE(json_agg(
            json_build_object(
-             'id',          ri.id,
+             'id',            ri.id,
              'item_name',   COALESCE(inv.name, ms.med_name),
              'item_code',   inv.code,
              'req_qty',     ri.req_qty,
@@ -807,14 +835,24 @@ export async function getRequisitions(req: Request, res: Response, next: NextFun
            ) ORDER BY ri.id
          ) FILTER (WHERE ri.id IS NOT NULL), '[]') AS items
        FROM inventory.requisition_header rh
-       LEFT JOIN public.profiles pu      ON pu.id = rh.requester_id
-       LEFT JOIN auth.users     au      ON au.id = rh.requester_id
+       -- Join หาชื่อคนขอเบิก
+       LEFT JOIN public.profiles pu       ON pu.id = rh.requester_id
+       LEFT JOIN auth.users      au       ON au.id = rh.requester_id
+       
+       -- [เพิ่มใหม่] Join หาชื่อคนอนุมัติ โดยใช้นามแฝง p_app และ a_app
+       LEFT JOIN public.profiles p_app    ON p_app.id = rh.approver_id
+       LEFT JOIN auth.users      a_app    ON a_app.id = rh.approver_id
+       
        LEFT JOIN inventory.requisition_item ri ON ri.header_id = rh.id
        LEFT JOIN inventory.items inv           ON inv.id = ri.item_id
        LEFT JOIN ${SCHEMA}.med_table ms        ON ms.main_item_id = ri.item_id
        WHERE rh.department_id = $1
        ${whereExtra}
-       GROUP BY rh.id, pu.firstname_th, pu.lastname_th, au.email
+       -- [แก้ไข] เพิ่มคอลัมน์ชื่อคนอนุมัติเข้าไปใน GROUP BY ด้วย
+       GROUP BY 
+         rh.id, 
+         pu.firstname_th, pu.lastname_th, au.email,
+         p_app.firstname_th, p_app.lastname_th, a_app.email
        ORDER BY rh.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, Number(limit), offset]

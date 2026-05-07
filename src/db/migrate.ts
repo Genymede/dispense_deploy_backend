@@ -250,6 +250,10 @@ const migrations: string[] = [
   `ALTER TABLE ${SCHEMA}.allergy_registry ADD COLUMN IF NOT EXISTS recorded_by UUID`,
   `ALTER TABLE ${SCHEMA}.med_interaction  ADD COLUMN IF NOT EXISTS recorded_by UUID`,
   `ALTER TABLE ${SCHEMA}.error_medication ADD COLUMN IF NOT EXISTS recorded_by UUID`,
+
+  // ── med_stock_lots: ราคาต้นทุนและราคาขายต่อหน่วยของแต่ละล็อต ─────────────────
+  `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS cost_price NUMERIC(10,2)`,
+  `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS unit_price NUMERIC(10,2)`,
 ];
 
 async function migrate() {
