@@ -688,13 +688,6 @@ export async function markExpired(req: Request, res: Response, next: NextFunctio
       [balAfter === 0, med_sid]
     );
 
-    // บันทึกใน expired_medicines
-    await client.query(
-      `INSERT INTO ${SCHEMA}.expired_medicines (med_sid, med_id, status)
-       VALUES ($1, $2, 'disposed')`,
-      [med_sid, drugRows[0].med_id]
-    );
-
     const tx = await recordTx(client, {
       med_sid: parseInt(med_sid), med_id: drugRows[0].med_id,
       tx_type: 'expired', quantity: parseInt(quantity),

@@ -642,10 +642,9 @@ export async function searchPatientsRegistry(req: Request, res: Response, next: 
       `SELECT p.patient_id, p.hn_number, p.first_name, p.last_name,
               CONCAT(p.first_name,' ',p.last_name) AS full_name,
               p.national_id, p.phone,
-              pa.house_number, pa.village_number, pa.road,
-              pa.sub_district, pa.district, pa.province, pa.postal_code
+              p.house_number, p.village_number, p.road,
+              p.sub_district, p.district, p.province, p.postal_code
        FROM ${SCHEMA}.patient p
-       LEFT JOIN ${SCHEMA}.patient_address pa ON pa.address_id = p.patient_addr_id
        WHERE p.first_name ILIKE $1 OR p.last_name ILIKE $1
           OR p.hn_number ILIKE $1 OR p.national_id ILIKE $1
        ORDER BY p.first_name LIMIT 20`,
@@ -1080,11 +1079,8 @@ export async function getPatientById(req: Request, res: Response, next: NextFunc
     const [patR, allergyR, adrR] = await Promise.all([
       query(
         `SELECT p.*,
-           CONCAT(p.first_name,' ',p.last_name) AS full_name,
-           pa.house_number, pa.village_number, pa.road,
-           pa.sub_district, pa.district, pa.province, pa.postal_code
+           CONCAT(p.first_name,' ',p.last_name) AS full_name
          FROM ${SCHEMA}.patient p
-         LEFT JOIN ${SCHEMA}.patient_address pa ON pa.address_id = p.patient_addr_id
          WHERE p.patient_id=$1`,
         [id]
       ),

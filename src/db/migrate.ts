@@ -254,6 +254,43 @@ const migrations: string[] = [
   // ── med_stock_lots: ราคาต้นทุนและราคาขายต่อหน่วยของแต่ละล็อต ─────────────────
   `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS cost_price NUMERIC(10,2)`,
   `ALTER TABLE ${SCHEMA}.med_stock_lots ADD COLUMN IF NOT EXISTS unit_price NUMERIC(10,2)`,
+
+  // ── schema optimisation: merge patient_address → patient ─────────────────────
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS house_number   TEXT`,
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS village_number INTEGER`,
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS sub_district   TEXT`,
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS district       TEXT`,
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS province       TEXT`,
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS road           TEXT`,
+  `ALTER TABLE ${SCHEMA}.patient ADD COLUMN IF NOT EXISTS postal_code    VARCHAR(10)`,
+  // copy existing address data from patient_address → patient (only if table still exists)
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = '${SCHEMA}' AND table_name = 'patient_address') THEN
+       UPDATE ${SCHEMA}.patient p
+       SET house_number   = pa.house_number,
+           village_number = pa.village_number,
+           sub_district   = pa.sub_district,
+           district       = pa.district,
+           province       = pa.province,
+           road           = pa.road,
+           postal_code    = pa.postal_code
+       FROM ${SCHEMA}.patient_address pa
+       WHERE pa.address_id = p.patient_addr_id
+         AND p.house_number IS NULL;
+     END IF;
+   END $$`,
+  // drop FK from patient before dropping patient_address
+  `ALTER TABLE ${SCHEMA}.patient DROP CONSTRAINT IF EXISTS patient_patient_addr_id_fkey`,
+  `DROP TABLE IF EXISTS ${SCHEMA}.patient_address`,
+
+  // ── schema optimisation: drop expired_medicines ──────────────────────────────
+  // drop trigger that depends on the table before dropping it
+  `DROP TRIGGER IF EXISTS trg_log_stock_change ON ${SCHEMA}.med_subwarehouse`,
+  `DROP TABLE IF EXISTS ${SCHEMA}.expired_medicines`,
+
+  // ── schema optimisation: drop med_stock_history ──────────────────────────────
+  `DROP TABLE IF EXISTS ${SCHEMA}.med_stock_history`,
 ];
 
 async function migrate() {
