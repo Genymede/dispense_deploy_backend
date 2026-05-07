@@ -149,7 +149,7 @@ export async function createQueue(req: Request, res: Response, next: NextFunctio
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { patient_id, note, ward } = req.body;
 

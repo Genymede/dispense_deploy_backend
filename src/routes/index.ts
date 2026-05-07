@@ -26,7 +26,8 @@ import {
   reportMedOrderHistory, reportMedUsageHistory,
   reportMedError, reportMedProblem, reportMedDelivery,
   reportOverdueMed, reportCutOff, reportRadRegistry,
-  executeCutOff,
+  executeCutOff, createCutOff, updateCutOff, deleteCutOff,
+  getSubWarehouses,
 } from '../controllers/reports_extra.controller';
 import { printLabel, getPrinters } from '../controllers/printer.controller';
 import {
@@ -133,8 +134,14 @@ r.get('/reports/med-problem',       reportMedProblem);
 r.get('/reports/med-delivery',      reportMedDelivery);
 r.get('/reports/overdue-med',       reportOverdueMed);
 r.get('/reports/cut-off',           reportCutOff);
+r.post('/reports/cut-off',          createCutOff);
 r.post('/reports/cut-off/:id/execute', executeCutOff);
+r.put('/reports/cut-off/:id',       updateCutOff);
+r.delete('/reports/cut-off/:id',    deleteCutOff);
 r.get('/reports/rad-registry',      reportRadRegistry);
+
+// ── Sub-warehouse ──────────────────────────────────────────────────────────────────
+r.get('/sub-warehouse', getSubWarehouses);
 
 // ── Registry helpers ───────────────────────────────────────────────────────────
 r.get('/registry/categories',       getMedCategories);

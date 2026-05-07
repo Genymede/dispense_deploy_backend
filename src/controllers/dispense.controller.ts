@@ -114,7 +114,7 @@ export async function createPrescription(req: Request, res: Response, next: Next
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const {
       patient_id, doctor_id, ward, note,
@@ -179,7 +179,7 @@ export async function dispensePrescription(req: Request, res: Response, next: Ne
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { id } = req.params;
     const { dispensed_by, overdue_items } = req.body;
@@ -265,10 +265,11 @@ export async function dispensePrescription(req: Request, res: Response, next: Ne
           `ยา ${item.med_sid} มีสต็อกไม่พอ (มี ${balBefore}, ต้องการ ${item.quantity})`, 400
         );
 
-      // sync lot ถ้า med_stock_lots ไม่ครบ
+      // sync lot ถ้า med_stock_lots (เฉพาะที่ยังไม่หมดอายุ) ไม่ครบ
       const { rows: lotRows } = await client.query(
         `SELECT COALESCE(SUM(quantity), 0)::int AS lot_total
-         FROM ${SCHEMA}.med_stock_lots WHERE med_sid = $1`, [item.med_sid]
+         FROM ${SCHEMA}.med_stock_lots 
+         WHERE med_sid = $1 AND (exp_date IS NULL OR exp_date >= CURRENT_DATE)`, [item.med_sid]
       );
       if (parseInt(lotRows[0].lot_total) < balBefore) {
         await client.query(
@@ -363,7 +364,7 @@ export async function returnPrescription(req: Request, res: Response, next: Next
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { id } = req.params;
     const { performed_by, note, items } = req.body;
@@ -479,7 +480,7 @@ export async function safetyCheck(req: Request, res: Response, next: NextFunctio
     const { rows: rxRows } = await query(
       `SELECT pr.prescription_id, pr.patient_id, pr.prescription_no,
               CONCAT(pa.first_name,' ',pa.last_name) AS patient_name,
-              pa.hn_number, pa.blood_group, pa."PMH"
+              pa.hn_number, pa.blood_group, pa."PMH", pa.gender
        FROM   ${SCHEMA}.prescriptions pr
        LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = pr.patient_id
        WHERE  pr.prescription_id = $1`, [id]
@@ -575,15 +576,16 @@ export async function safetyCheck(req: Request, res: Response, next: NextFunctio
 
     // ── 4. ตรวจสต็อกไม่พอ ────────────────────────────────────────────────────
     for (const item of rxItems) {
-      if (item.is_expired || (item.exp_date && new Date(item.exp_date) < new Date())) {
+      const isExpired = item.is_expired || (item.exp_date && new Date(item.exp_date) < new Date());
+      if (isExpired && Number(item.stock_available) <= 0) {
         alerts.push({
           type: 'expired',
           level: 'critical',
           title: `🚫 ยาหมดอายุ: ${item.med_name}`,
-          detail: `ยาหมดอายุแล้ว กรุณาเลือกยา lot ใหม่`,
+          detail: `ยาทุกล็อตหมดอายุแล้ว ไม่สามารถจ่ายได้`,
           med_name: item.med_name,
         });
-      } else if (item.stock_available < item.quantity) {
+      } else if (Number(item.stock_available) < item.quantity) {
         alerts.push({
           type: 'stock',
           level: 'critical',
@@ -605,22 +607,24 @@ export async function safetyCheck(req: Request, res: Response, next: NextFunctio
           med_name: item.med_name,
         });
       }
-      if (item.med_pregnancy_category === 'X') {
-        alerts.push({
-          type: 'pregnancy',
-          level: 'critical',
-          title: `🤰 ห้ามใช้ในหญิงตั้งครรภ์: ${item.med_name}`,
-          detail: 'Pregnancy Category X — ห้ามใช้ในหญิงตั้งครรภ์หรือกำลังจะตั้งครรภ์',
-          med_name: item.med_name,
-        });
-      } else if (['D'].includes(item.med_pregnancy_category)) {
-        alerts.push({
-          type: 'pregnancy',
-          level: 'warning',
-          title: `🤰 ระวังในหญิงตั้งครรภ์: ${item.med_name}`,
-          detail: `Pregnancy Category ${item.med_pregnancy_category} — มีความเสี่ยง ต้องชั่งน้ำหนักผลดีผลเสีย`,
-          med_name: item.med_name,
-        });
+      if (rx.gender !== 'M') {
+        if (item.med_pregnancy_category === 'X') {
+          alerts.push({
+            type: 'pregnancy',
+            level: 'critical',
+            title: `🤰 ห้ามใช้ในหญิงตั้งครรภ์: ${item.med_name}`,
+            detail: 'Pregnancy Category X — ห้ามใช้ในหญิงตั้งครรภ์หรือกำลังจะตั้งครรภ์',
+            med_name: item.med_name,
+          });
+        } else if (['D'].includes(item.med_pregnancy_category)) {
+          alerts.push({
+            type: 'pregnancy',
+            level: 'warning',
+            title: `🤰 ระวังในหญิงตั้งครรภ์: ${item.med_name}`,
+            detail: `Pregnancy Category ${item.med_pregnancy_category} — มีความเสี่ยง ต้องชั่งน้ำหนักผลดีผลเสีย`,
+            med_name: item.med_name,
+          });
+        }
       }
     }
 
@@ -651,7 +655,7 @@ export async function createMockPrescription(req: Request, res: Response, next: 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { count = 1 } = req.body; // จำนวนใบสั่งที่ต้องการสุ่ม (max 5)
     const n = Math.min(5, Math.max(1, parseInt(String(count))));
@@ -806,6 +810,14 @@ export async function safetyCheckInline(req: Request, res: Response, next: NextF
     // resolve patient
     const resolvedPatient = patient_id ? await resolvePatientId(patient_id) : null;
 
+    let patientGender: string | null = null;
+    if (resolvedPatient) {
+      const { rows: pgRows } = await query(
+        `SELECT gender FROM ${SCHEMA}.patient WHERE patient_id = $1`, [resolvedPatient]
+      );
+      patientGender = pgRows[0]?.gender ?? null;
+    }
+
     // ดึงข้อมูลยาจาก med_sid
     const { rows: drugRows } = await query(
       `SELECT ms.med_sid, ms.med_id, ms.med_quantity AS stock_available,
@@ -896,14 +908,25 @@ export async function safetyCheckInline(req: Request, res: Response, next: NextF
 
     // ── 4. ตรวจสต็อก + อายุยา + ยาพิเศษ ─────────────────────────────────────
     for (const d of drugRows) {
-      if (d.is_expired || (d.exp_date && new Date(d.exp_date) < new Date()))
-        alerts.push({ type: 'expired', level: 'critical', title: `🚫 หมดอายุ: ${d.med_name}`, detail: 'ยาหมดอายุ กรุณาใช้ lot ใหม่', med_name: d.med_name });
+      // แจ้งหมดอายุเฉพาะเมื่อ "ไม่เหลือล็อตที่ใช้ได้เลย"
+      const expiredAtWarehouse = d.is_expired || (d.exp_date && new Date(d.exp_date) < new Date());
+      if (expiredAtWarehouse && Number(d.stock_available) <= 0) {
+        alerts.push({ 
+          type: 'expired', 
+          level: 'critical', 
+          title: `🚫 หมดอายุ: ${d.med_name}`, 
+          detail: 'ยาทุกล็อตหมดอายุแล้ว ไม่สามารถจ่ายได้', 
+          med_name: d.med_name 
+        });
+      }
       if (d.med_severity?.includes('เสพติด'))
         alerts.push({ type: 'narcotic', level: 'info', title: `📋 ยาเสพติด: ${d.med_name}`, detail: 'ต้องบันทึกในทะเบียนยาเสพติด', med_name: d.med_name });
-      if (d.med_pregnancy_category === 'X')
-        alerts.push({ type: 'pregnancy', level: 'critical', title: `🤰 ห้ามในหญิงตั้งครรภ์: ${d.med_name}`, detail: 'Pregnancy Category X', med_name: d.med_name });
-      else if (d.med_pregnancy_category === 'D')
-        alerts.push({ type: 'pregnancy', level: 'warning', title: `🤰 ระวังในหญิงตั้งครรภ์: ${d.med_name}`, detail: 'Pregnancy Category D', med_name: d.med_name });
+      if (patientGender !== 'M') {
+        if (d.med_pregnancy_category === 'X')
+          alerts.push({ type: 'pregnancy', level: 'critical', title: `🤰 ห้ามในหญิงตั้งครรภ์: ${d.med_name}`, detail: 'Pregnancy Category X', med_name: d.med_name });
+        else if (d.med_pregnancy_category === 'D')
+          alerts.push({ type: 'pregnancy', level: 'warning', title: `🤰 ระวังในหญิงตั้งครรภ์: ${d.med_name}`, detail: 'Pregnancy Category D', med_name: d.med_name });
+      }
     }
 
     const hasCritical = alerts.some(a => a.level === 'critical');
@@ -925,7 +948,7 @@ export async function updatePrescriptionItems(req: Request, res: Response, next:
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SET search_path TO ${SCHEMA}, public`);
+    await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
 
     const { id } = req.params;
     const { items } = req.body;
@@ -1018,6 +1041,7 @@ export async function getPrescriptionFull(req: Request, res: Response, next: Nex
       `SELECT pr.*,
               pa.first_name, pa.last_name, pa.hn_number, pa.blood_group, pa."PMH",
               pa.photo AS patient_photo, pa.treatment_right, pa.treatment_right_note,
+              pa.gender, pa.phone, pa.national_id,
               CONCAT(pa.first_name,' ',pa.last_name) AS patient_name,
               COALESCE(pdoc.firstname_th || ' ' || pdoc.lastname_th, adoc.email, '') AS doctor_name,
               pdoc.firstname_th AS doctor_first,
@@ -1174,9 +1198,9 @@ export async function liveSafetyCheck(req: Request, res: Response, next: NextFun
     }
     for (const s of stocks) {
       const isExpired = s.is_expired || (s.exp_date && new Date(s.exp_date) < new Date());
-      if (isExpired) {
+      if (isExpired && Number(s.med_quantity) <= 0) {
         alertMap[s.med_sid] = alertMap[s.med_sid] ?? [];
-        alertMap[s.med_sid].push({ type: 'expired', level: 'critical', title: `🚫 ยาหมดอายุ: ${s.med_name}`, detail: 'กรุณาเลือก lot ใหม่' });
+        alertMap[s.med_sid].push({ type: 'expired', level: 'critical', title: `🚫 ยาหมดอายุ: ${s.med_name}`, detail: 'ยาทุกล็อตหมดอายุแล้ว' });
       } else if (s.med_quantity <= 5) {
         alertMap[s.med_sid] = alertMap[s.med_sid] ?? [];
         alertMap[s.med_sid].push({ type: 'stock', level: s.med_quantity === 0 ? 'critical' : 'warning', title: `📦 สต็อกต่ำ: ${s.med_name}`, detail: `คงเหลือ ${s.med_quantity} หน่วย` });
