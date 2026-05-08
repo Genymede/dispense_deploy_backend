@@ -1092,6 +1092,18 @@ export async function getPatientById(req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 }
 
+export async function updatePatientPregnancy(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    const { is_pregnant } = req.body;
+    await query(
+      `UPDATE ${SCHEMA}.patient SET is_pregnant = $1 WHERE patient_id = $2`,
+      [Boolean(is_pregnant), id]
+    );
+    res.json({ success: true });
+  } catch (err) { next(err); }
+}
+
 // ═══ MED PROBLEM ═════════════════════════════════════════════════════════════
 
 export async function getMedProblems(req: Request, res: Response, next: NextFunction) {

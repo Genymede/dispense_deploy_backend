@@ -18,7 +18,7 @@ import {
   createMedUsage, updateMedUsage,
   createDelivery, updateDelivery, deleteDelivery,
   createOverdue, updateOverdue, deleteOverdue,
-  getPatients, getPatientById,
+  getPatients, getPatientById, updatePatientPregnancy,
   getMedProblems, createMedProblem, updateMedProblem, deleteMedProblem,
 } from '../controllers/registry.controller';
 import {
@@ -202,8 +202,9 @@ r.put('/registry/med-problem/:id',         updateMedProblem);
 r.delete('/registry/med-problem/:id',      deleteMedProblem);
 
 // ── Patients ───────────────────────────────────────────────────────────────────
-r.get('/patients',     getPatients);
-r.get('/patients/:id', getPatientById);
+r.get('/patients',                   getPatients);
+r.get('/patients/:id',               getPatientById);
+r.patch('/patients/:id/pregnancy',   updatePatientPregnancy);
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
 r.get('/queue/display',       getQueueDisplay);

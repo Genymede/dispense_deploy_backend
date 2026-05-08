@@ -480,7 +480,7 @@ export async function safetyCheck(req: Request, res: Response, next: NextFunctio
     const { rows: rxRows } = await query(
       `SELECT pr.prescription_id, pr.patient_id, pr.prescription_no,
               CONCAT(pa.first_name,' ',pa.last_name) AS patient_name,
-              pa.hn_number, pa.blood_group, pa."PMH", pa.gender
+              pa.hn_number, pa.blood_group, pa."PMH", pa.gender, pa.is_pregnant
        FROM   ${SCHEMA}.prescriptions pr
        LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = pr.patient_id
        WHERE  pr.prescription_id = $1`, [id]
@@ -607,7 +607,7 @@ export async function safetyCheck(req: Request, res: Response, next: NextFunctio
           med_name: item.med_name,
         });
       }
-      if (rx.gender !== 'M') {
+      if (rx.gender === 'F' && rx.is_pregnant) {
         if (item.med_pregnancy_category === 'X') {
           alerts.push({
             type: 'pregnancy',
@@ -811,11 +811,13 @@ export async function safetyCheckInline(req: Request, res: Response, next: NextF
     const resolvedPatient = patient_id ? await resolvePatientId(patient_id) : null;
 
     let patientGender: string | null = null;
+    let patientIsPregnant = false;
     if (resolvedPatient) {
       const { rows: pgRows } = await query(
-        `SELECT gender FROM ${SCHEMA}.patient WHERE patient_id = $1`, [resolvedPatient]
+        `SELECT gender, is_pregnant FROM ${SCHEMA}.patient WHERE patient_id = $1`, [resolvedPatient]
       );
       patientGender = pgRows[0]?.gender ?? null;
+      patientIsPregnant = pgRows[0]?.is_pregnant ?? false;
     }
 
     // ดึงข้อมูลยาจาก med_sid
@@ -921,7 +923,7 @@ export async function safetyCheckInline(req: Request, res: Response, next: NextF
       }
       if (d.med_severity?.includes('เสพติด'))
         alerts.push({ type: 'narcotic', level: 'info', title: `📋 ยาเสพติด: ${d.med_name}`, detail: 'ต้องบันทึกในทะเบียนยาเสพติด', med_name: d.med_name });
-      if (patientGender !== 'M') {
+      if (patientGender === 'F' && patientIsPregnant) {
         if (d.med_pregnancy_category === 'X')
           alerts.push({ type: 'pregnancy', level: 'critical', title: `🤰 ห้ามในหญิงตั้งครรภ์: ${d.med_name}`, detail: 'Pregnancy Category X', med_name: d.med_name });
         else if (d.med_pregnancy_category === 'D')
