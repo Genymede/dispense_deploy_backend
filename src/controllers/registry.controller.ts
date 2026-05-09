@@ -393,6 +393,11 @@ export async function createAllergy(req: Request, res: Response, next: NextFunct
     const resolvedPatient = await resolvePatientId(patient_id);
     if (!resolvedMed) throw new AppError('ไม่พบยา (med_id/ชื่อยา)', 400);
     if (!resolvedPatient) throw new AppError('ไม่พบผู้ป่วย (patient_id/HN)', 400);
+    const { rows: dupRows } = await query(
+      `SELECT allr_id FROM ${SCHEMA}.allergy_registry WHERE patient_id = $1 AND med_id = $2 LIMIT 1`,
+      [resolvedPatient, resolvedMed]
+    );
+    if (dupRows.length) throw new AppError('ผู้ป่วยนี้มีข้อมูลแพ้ยานี้อยู่แล้ว', 409);
     const { rows } = await query(
       `INSERT INTO ${SCHEMA}.allergy_registry (med_id, patient_id, symptoms, description, severity, reported_at, recorded_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -487,6 +492,14 @@ export async function createInteraction(req: Request, res: Response, next: NextF
     const { med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type, recorded_by } = req.body;
     if (!med_id_1 || !med_id_2 || !description) throw new AppError('med_id_1, med_id_2, description จำเป็น', 400);
     if (med_id_1 === med_id_2) throw new AppError('ไม่สามารถเพิ่มปฏิกิริยากับยาชนิดเดียวกัน', 400);
+    const { rows: dupRows } = await query(
+      `SELECT inter_id FROM ${SCHEMA}.med_interaction
+       WHERE is_active = true
+         AND ((med_id_1 = $1 AND med_id_2 = $2) OR (med_id_1 = $2 AND med_id_2 = $1))
+       LIMIT 1`,
+      [med_id_1, med_id_2]
+    );
+    if (dupRows.length) throw new AppError('คู่ยานี้มีข้อมูลปฏิกิริยาอยู่แล้ว', 409);
     const { rows } = await query(
       `INSERT INTO ${SCHEMA}.med_interaction
          (med_id_1, med_id_2, description, severity, evidence_level, source_reference, interaction_type, recorded_by)
