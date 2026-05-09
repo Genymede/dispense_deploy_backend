@@ -457,7 +457,9 @@ export async function searchPatients(req: Request, res: Response, next: NextFunc
     if (!q) { res.json([]); return; }
     const { rows } = await query(
       `SELECT patient_id, hn_number, first_name, last_name,
-              CONCAT(first_name,' ',last_name) AS full_name, national_id, phone
+              CONCAT(first_name,' ',last_name) AS full_name, national_id, phone,
+              house_number, village_number, road,
+              sub_district, district, province, postal_code
        FROM ${SCHEMA}.patient
        WHERE first_name ILIKE $1 OR last_name ILIKE $1
           OR hn_number ILIKE $1 OR national_id ILIKE $1
