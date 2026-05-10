@@ -113,11 +113,68 @@ export async function runCutOffLogic(warehouseId: number, warehouseName: string)
   }
 }
 
+// ── คำนวณ scheduled datetime ของรอบนั้นในปัจจุบัน ────────────────────────────
+function getScheduledTime(period: any, now: Date): Date {
+  const year = now.getFullYear();
+  // monthly = เดือนปัจจุบัน, yearly = เดือนที่กำหนด (1-indexed → 0-indexed)
+  const month = period.frequency === 'yearly'
+    ? period.period_month - 1
+    : now.getMonth();
+
+  // clamp วันที่ กรณี period_day=31 แต่เดือนนั้นมีแค่ 28-30 วัน
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(period.period_day, daysInMonth);
+
+  return new Date(year, month, day, period.period_time_h, period.period_time_m, 0, 0);
+}
+
 // ── ตรวจและรัน cut-off ที่ถึงเวลา ────────────────────────────────────────────
 async function checkAndExecuteCutOff(): Promise<void> {
-  // ... (ส่วนนี้คงเดิม)
+  try {
+    const { rows: periods } = await query(
+      `SELECT mcp.*, sw.name AS warehouse_name
+       FROM ${SCHEMA}.med_cut_off_period mcp
+       JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id = mcp.sub_warehouse_id
+       WHERE mcp.is_active = true`
+    );
+
+    const now = new Date();
+
+    for (const period of periods) {
+      const scheduledAt = getScheduledTime(period, now);
+
+      // ถึงเวลาแล้ว AND ยังไม่เคยรันในรอบนี้
+      const alreadyRan = period.last_executed_at &&
+        new Date(period.last_executed_at) >= scheduledAt;
+
+      if (now < scheduledAt || alreadyRan) continue;
+
+      try {
+        await runCutOffLogic(period.sub_warehouse_id, period.warehouse_name);
+        await query(
+          `UPDATE ${SCHEMA}.med_cut_off_period
+           SET last_executed_at = NOW(), updated_at = NOW()
+           WHERE med_period_id = $1`,
+          [period.med_period_id]
+        );
+        console.log(
+          `[Scheduler] cut-off ✓  warehouse="${period.warehouse_name}"` +
+          `  period=${period.med_period_id}  at=${now.toISOString()}`
+        );
+      } catch (err) {
+        console.error(
+          `[Scheduler] cut-off ✗  period=${period.med_period_id}`, err
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[Scheduler] checkAndExecuteCutOff error:', err);
+  }
 }
 
 export function startScheduler(): void {
-  // ... (ส่วนนี้คงเดิม)
+  console.log('[Scheduler] started — checking every 60 s');
+  // รันทันทีครั้งแรก แล้วทุก 1 นาที
+  checkAndExecuteCutOff();
+  setInterval(checkAndExecuteCutOff, 60_000);
 }
