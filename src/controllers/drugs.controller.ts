@@ -187,7 +187,7 @@ export async function getLots(req: Request, res: Response, next: NextFunction) {
   try {
     const { med_sid } = req.params;
     const { rows } = await query(
-      `SELECT lot_id, lot_number, quantity, exp_date, mfg_date, received_at, note
+      `SELECT lot_id, lot_number, quantity, exp_date, mfg_date, received_at, note, cost_price, unit_price
        FROM ${SCHEMA}.med_stock_lots WHERE med_sid = $1
        ORDER BY exp_date ASC NULLS LAST, lot_id ASC`,
       [med_sid]

@@ -824,7 +824,9 @@ export async function getRequisitions(req: Request, res: Response, next: NextFun
              'req_qty',     ri.req_qty,
              'approved_qty',ri.approved_qty,
              'issued_qty',  ri.issued_qty,
-             'note',        ri.note
+             'note',        ri.note,
+             'cost_price',  ms.med_cost_price,
+             'unit_price',  ms.med_selling_price
            ) ORDER BY ri.id
          ) FILTER (WHERE ri.id IS NOT NULL), '[]') AS items
        FROM inventory.requisition_header rh
