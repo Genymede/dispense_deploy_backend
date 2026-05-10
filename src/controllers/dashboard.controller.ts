@@ -143,25 +143,33 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
 
     const { rows: settingRows } = await query(
       `SELECT key, value FROM ${SCHEMA}.system_settings
-       WHERE key IN ('near_expiry_days','alert_enabled_low_stock','alert_enabled_near_expiry',
+       WHERE key IN ('near_expiry_days','low_stock_pct','alert_enabled_low_stock','alert_enabled_near_expiry',
                      'alert_enabled_expired','alert_enabled_overstock','alert_enabled_new_drug')`
     );
     const settingMap: Record<string, string> = {};
     for (const r of settingRows) settingMap[r.key] = r.value;
 
     const nearExpiryDays = parseInt(settingMap['near_expiry_days'] ?? '30');
+    const lowStockPct    = parseFloat(settingMap['low_stock_pct'] ?? '100') / 100;
     const enabled = (key: string, def = true) =>
       settingMap[key] !== undefined ? settingMap[key] === 'true' : def;
 
     const liveAlerts: any[] = [];
 
     // Low stock (lot-based)
+    // ถ้ายามี max_quantity → ใช้ low_stock_pct × max_quantity เป็น threshold
+    // ถ้าไม่มี max_quantity → fallback ใช้ min_quantity
     if (enabled('alert_enabled_low_stock')) {
       const { rows: lowRows } = await query(
         `SELECT
            ms.med_sid,
            COALESCE(lc.lot_stock, 0) AS lot_quantity,
            ms.min_quantity,
+           ms.max_quantity,
+           CASE
+             WHEN ms.max_quantity IS NOT NULL THEN ROUND(ms.max_quantity * $1)
+             ELSE ms.min_quantity
+           END AS threshold,
            COALESCE(ms.med_showname, mt.med_name) AS drug_name
          FROM ${SCHEMA}.med_subwarehouse ms
          JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
@@ -170,19 +178,28 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
              COALESCE(SUM(quantity) FILTER (WHERE exp_date IS NULL OR exp_date >= CURRENT_DATE), 0)::int AS lot_stock
            FROM ${SCHEMA}.med_stock_lots GROUP BY med_sid
          ) lc ON lc.med_sid = ms.med_sid
-         WHERE ms.min_quantity IS NOT NULL
-           AND COALESCE(lc.lot_stock, 0) > 0
-           AND COALESCE(lc.lot_stock, 0) < ms.min_quantity
-         ORDER BY (COALESCE(lc.lot_stock, 0)::float / NULLIF(ms.min_quantity,0)) ASC
-         LIMIT 50`
+         WHERE (
+           (ms.max_quantity IS NOT NULL AND COALESCE(lc.lot_stock, 0) < ms.max_quantity * $1)
+           OR
+           (ms.max_quantity IS NULL AND ms.min_quantity IS NOT NULL AND COALESCE(lc.lot_stock, 0) < ms.min_quantity)
+         )
+         AND COALESCE(lc.lot_stock, 0) >= 0
+         ORDER BY (COALESCE(lc.lot_stock, 0)::float / NULLIF(
+           CASE WHEN ms.max_quantity IS NOT NULL THEN ms.max_quantity * $1 ELSE ms.min_quantity END, 0
+         )) ASC
+         LIMIT 50`,
+        [lowStockPct]
       );
       for (const r of lowRows) {
+        const threshold = Number(r.threshold);
+        const usingPct  = r.max_quantity != null;
+        const pctLabel  = usingPct ? ` (${Math.round(lowStockPct * 100)}% ของ ${r.max_quantity})` : '';
         liveAlerts.push({
           alert_type: 'low_stock',
           med_sid: r.med_sid,
           drug_name: r.drug_name,
-          message: `สต็อกเหลือ ${r.lot_quantity} หน่วย (ขั้นต่ำ ${r.min_quantity})`,
-          severity: r.lot_quantity < r.min_quantity * 0.5 ? 'critical' : 'warning',
+          message: `สต็อกเหลือ ${r.lot_quantity} หน่วย (เกณฑ์แจ้งเตือน ${threshold} หน่วย${pctLabel})`,
+          severity: r.lot_quantity < threshold * 0.5 ? 'critical' : 'warning',
         });
       }
     }
