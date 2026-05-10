@@ -167,7 +167,7 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
            ms.min_quantity,
            ms.max_quantity,
            CASE
-             WHEN ms.max_quantity IS NOT NULL THEN ROUND(ms.max_quantity * $1)
+             WHEN ms.max_quantity IS NOT NULL THEN ROUND(ms.max_quantity::numeric * $1::numeric)
              ELSE ms.min_quantity
            END AS threshold,
            COALESCE(ms.med_showname, mt.med_name) AS drug_name
@@ -179,13 +179,13 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
            FROM ${SCHEMA}.med_stock_lots GROUP BY med_sid
          ) lc ON lc.med_sid = ms.med_sid
          WHERE (
-           (ms.max_quantity IS NOT NULL AND COALESCE(lc.lot_stock, 0) < ms.max_quantity * $1)
+           (ms.max_quantity IS NOT NULL AND COALESCE(lc.lot_stock, 0) < ms.max_quantity::numeric * $1::numeric)
            OR
            (ms.max_quantity IS NULL AND ms.min_quantity IS NOT NULL AND COALESCE(lc.lot_stock, 0) < ms.min_quantity)
          )
          AND COALESCE(lc.lot_stock, 0) >= 0
-         ORDER BY (COALESCE(lc.lot_stock, 0)::float / NULLIF(
-           CASE WHEN ms.max_quantity IS NOT NULL THEN ms.max_quantity * $1 ELSE ms.min_quantity END, 0
+         ORDER BY (COALESCE(lc.lot_stock, 0)::numeric / NULLIF(
+           CASE WHEN ms.max_quantity IS NOT NULL THEN ms.max_quantity::numeric * $1::numeric ELSE ms.min_quantity::numeric END, 0
          )) ASC
          LIMIT 50`,
         [lowStockPct]
