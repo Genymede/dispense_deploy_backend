@@ -862,3 +862,76 @@ export async function getRequisitions(req: Request, res: Response, next: NextFun
     res.json({ data: rows, total: parseInt(countRows[0]?.total ?? '0') });
   } catch (err) { next(err); }
 }
+// ── POST /stock/write-off — ตัดยาหมดอายุออกด้วยตนเอง ─────────────────────────
+export async function writeOffExpiredLots(req: Request, res: Response, next: NextFunction) {
+  const { med_sid, note } = req.body;
+  if (!med_sid) return next(new AppError('กรุณาระบุ med_sid', 400));
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // lock subwarehouse row
+    const { rows: swRows } = await client.query(
+      `SELECT ms.med_sid, ms.med_quantity, ms.med_id
+       FROM ${SCHEMA}.med_subwarehouse ms
+       WHERE ms.med_sid = $1 FOR UPDATE`,
+      [med_sid]
+    );
+    if (!swRows.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
+    const { med_quantity: balBefore, med_id } = swRows[0];
+
+    // ดึง lots ที่หมดอายุและยังมียอดคงเหลือ
+    const { rows: expiredLots } = await client.query(
+      `SELECT lot_id, lot_number, quantity, exp_date
+       FROM ${SCHEMA}.med_stock_lots
+       WHERE med_sid = $1 AND exp_date < CURRENT_DATE AND quantity > 0
+       ORDER BY exp_date ASC`,
+      [med_sid]
+    );
+    if (!expiredLots.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'ไม่มีล็อตหมดอายุที่ต้องตัดออก' });
+    }
+
+    const totalQty = expiredLots.reduce((s: number, l: any) => s + parseInt(l.quantity), 0);
+    const performedBy = (req as any).currentUser?.id ?? null;
+    const resolvedPerformer = performedBy ? await resolveUserId(performedBy) : null;
+    const noteText = note ? `ตัดยาหมดอายุออก — ${note}` : 'ตัดยาหมดอายุออก';
+
+    // zero out each expired lot
+    for (const lot of expiredLots) {
+      await client.query(
+        `UPDATE ${SCHEMA}.med_stock_lots
+         SET quantity = 0, status = 'expired',
+             note = COALESCE(note || ' | ', '') || $2, updated_at = NOW()
+         WHERE lot_id = $1`,
+        [lot.lot_id, noteText]
+      );
+    }
+
+    const balAfter = await recalcTotal(parseInt(med_sid), client);
+    const primaryLot = expiredLots[0];
+
+    await recordTx(client, {
+      med_sid: parseInt(med_sid), med_id,
+      tx_type: 'write_off', quantity: totalQty,
+      balance_before: parseInt(balBefore), balance_after: balAfter,
+      lot_number: primaryLot.lot_number ?? undefined,
+      expiry_date: primaryLot.exp_date ?? undefined,
+      performed_by: resolvedPerformer ?? undefined,
+      note: noteText,
+    });
+
+    await client.query('COMMIT');
+    res.json({
+      message: `ตัดออกสำเร็จ ${totalQty} หน่วย จาก ${expiredLots.length} ล็อต`,
+      lots: expiredLots.length,
+      quantity: totalQty,
+      balance_after: balAfter,
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    next(err);
+  } finally { client.release(); }
+}
