@@ -864,7 +864,7 @@ export async function getRequisitions(req: Request, res: Response, next: NextFun
 }
 // ── POST /stock/write-off — ตัดยาหมดอายุออกด้วยตนเอง ─────────────────────────
 export async function writeOffExpiredLots(req: Request, res: Response, next: NextFunction) {
-  const { med_sid, note } = req.body;
+  const { med_sid, lot_id, note } = req.body;
   if (!med_sid) return next(new AppError('กรุณาระบุ med_sid', 400));
 
   const client = await pool.connect();
@@ -881,17 +881,32 @@ export async function writeOffExpiredLots(req: Request, res: Response, next: Nex
     if (!swRows.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
     const { med_quantity: balBefore, med_id } = swRows[0];
 
-    // ดึง lots ที่หมดอายุและยังมียอดคงเหลือ
-    const { rows: expiredLots } = await client.query(
-      `SELECT lot_id, lot_number, quantity, exp_date
-       FROM ${SCHEMA}.med_stock_lots
-       WHERE med_sid = $1 AND exp_date < CURRENT_DATE AND quantity > 0
-       ORDER BY exp_date ASC`,
-      [med_sid]
-    );
-    if (!expiredLots.length) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ message: 'ไม่มีล็อตหมดอายุที่ต้องตัดออก' });
+    let expiredLots: any[];
+
+    if (lot_id) {
+      // ตัดทีละล็อต
+      const { rows } = await client.query(
+        `SELECT lot_id, lot_number, quantity, exp_date
+         FROM ${SCHEMA}.med_stock_lots
+         WHERE lot_id = $1 AND med_sid = $2 AND exp_date < CURRENT_DATE AND quantity > 0`,
+        [lot_id, med_sid]
+      );
+      if (!rows.length) throw new AppError('ไม่พบล็อตหมดอายุหรือยาหมดแล้ว', 400);
+      expiredLots = rows;
+    } else {
+      // ตัดทุก lot ที่หมดอายุ
+      const { rows } = await client.query(
+        `SELECT lot_id, lot_number, quantity, exp_date
+         FROM ${SCHEMA}.med_stock_lots
+         WHERE med_sid = $1 AND exp_date < CURRENT_DATE AND quantity > 0
+         ORDER BY exp_date ASC`,
+        [med_sid]
+      );
+      if (!rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: 'ไม่มีล็อตหมดอายุที่ต้องตัดออก' });
+      }
+      expiredLots = rows;
     }
 
     const totalQty = expiredLots.reduce((s: number, l: any) => s + parseInt(l.quantity), 0);
@@ -925,7 +940,9 @@ export async function writeOffExpiredLots(req: Request, res: Response, next: Nex
 
     await client.query('COMMIT');
     res.json({
-      message: `ตัดออกสำเร็จ ${totalQty} หน่วย จาก ${expiredLots.length} ล็อต`,
+      message: lot_id
+        ? `ตัดออกสำเร็จ ${totalQty} หน่วย (ล็อต ${expiredLots[0].lot_number || lot_id})`
+        : `ตัดออกสำเร็จ ${totalQty} หน่วย จาก ${expiredLots.length} ล็อต`,
       lots: expiredLots.length,
       quantity: totalQty,
       balance_after: balAfter,
