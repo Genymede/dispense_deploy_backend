@@ -114,7 +114,7 @@ export async function runCutOffLogic(warehouseId: number, warehouseName: string)
 }
 
 // ── คำนวณ scheduled datetime ของรอบนั้นในปัจจุบัน ────────────────────────────
-function getScheduledTime(period: any, now: Date): Date {
+export function getScheduledTime(period: any, now: Date): Date {
   const year = now.getFullYear();
   // monthly = เดือนปัจจุบัน, yearly = เดือนที่กำหนด (1-indexed → 0-indexed)
   const month = period.frequency === 'yearly'

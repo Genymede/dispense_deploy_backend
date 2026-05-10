@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { query, SCHEMA } from '../db/pool';
+import { getScheduledTime } from '../scheduler';
 
 // ── GET /dashboard/stats ──────────────────────────────────────────────────────
 export async function getDashboardStats(req: Request, res: Response, next: NextFunction) {
@@ -305,27 +306,34 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
 
     // Upcoming cut-off
     try {
+      const advanceDays = parseInt(settingMap['cut_off_advance_days'] ?? '3');
       const { rows: cutRows } = await query(
         `SELECT mcp.*, sw.name AS warehouse_name
          FROM ${SCHEMA}.med_cut_off_period mcp
          JOIN ${SCHEMA}.sub_warehouse sw ON sw.sub_warehouse_id = mcp.sub_warehouse_id
-         WHERE mcp.is_active = true
-           AND (mcp.last_executed_at IS NULL OR mcp.last_executed_at::date < CURRENT_DATE)
-           AND (
-             (EXTRACT(DAY FROM NOW()) <= mcp.period_day AND mcp.period_day - EXTRACT(DAY FROM NOW()) <= 3)
-           )`
+         WHERE mcp.is_active = true`
       );
+      const now = new Date();
       for (const r of cutRows) {
+        const scheduledAt = getScheduledTime(r, now);
+        const msUntil = scheduledAt.getTime() - now.getTime();
+        const daysUntil = msUntil / 86_400_000;
+        // แจ้งเตือนถ้าอยู่ในช่วง advance days และยังไม่ได้รันในรอบนี้
+        const alreadyRan = r.last_executed_at && new Date(r.last_executed_at) >= scheduledAt;
+        if (alreadyRan || daysUntil < 0 || daysUntil > advanceDays) continue;
+        const daysLabel = daysUntil < 1
+          ? `ภายในไม่ถึง 1 วัน`
+          : `อีก ${Math.ceil(daysUntil)} วัน`;
         liveAlerts.push({
           alert_type: 'cut_off',
           med_sid: null,
           drug_name: r.warehouse_name,
-          message: `ใกล้ถึงรอบตัดยา "${r.warehouse_name}" วันที่ ${r.period_day} เวลา ${String(r.period_time_h??0).padStart(2,'0')}:${String(r.period_time_m??0).padStart(2,'0')}`,
-          severity: 'warning',
-          cut_off_id: r.cut_off_period_id ?? r.id,
+          message: `ใกล้ถึงรอบตัดยา — ${daysLabel} (${r.period_day}/${String(r.period_time_h??0).padStart(2,'0')}:${String(r.period_time_m??0).padStart(2,'0')})`,
+          severity: daysUntil < 1 ? 'critical' : 'warning',
+          cut_off_id: r.med_period_id,
         });
       }
-    } catch { /* cut_off_period may not have last_executed_at yet */ }
+    } catch (e) { console.error('[alerts] cut_off check error:', e); }
 
     const NON_ENUM_TYPES = new Set(['new_drug']);
     const persistableAlerts = liveAlerts.filter(a => a.med_sid != null && !NON_ENUM_TYPES.has(a.alert_type));
