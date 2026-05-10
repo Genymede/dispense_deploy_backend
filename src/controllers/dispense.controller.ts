@@ -1072,7 +1072,8 @@ export async function getPrescriptionFull(req: Request, res: Response, next: Nex
               ms.med_showname, ms.med_showname_eng, ms.packaging_type,
               ms.med_quantity AS stock_available, ms.exp_date, ms.is_expired,
               mt.med_name, mt.med_generic_name, mt.med_counting_unit AS unit,
-              mt.med_severity, mt.med_pregnancy_category, mt.med_medical_category
+              mt.med_severity, mt.med_pregnancy_category, mt.med_medical_category,
+              mt.med_indication
        FROM   ${SCHEMA}.prescription_items pi
        JOIN   ${SCHEMA}.med_subwarehouse ms ON ms.med_sid = pi.med_sid
        JOIN   ${SCHEMA}.med_table        mt ON mt.med_id  = pi.med_id

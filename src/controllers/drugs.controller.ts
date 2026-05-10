@@ -73,6 +73,7 @@ export async function getDrugs(req: Request, res: Response, next: NextFunction) 
         mt.med_selling_price    AS list_selling_price,
         mt.med_exp              AS registered_exp,
         mt.med_mfg              AS registered_mfg,
+        mt.med_indication,
         COALESCE(lc.lot_count, 0) AS lot_count,
         COALESCE(lc.expired_lot_count, 0) AS expired_lot_count,
         lc.nearest_lot_exp,
@@ -152,6 +153,7 @@ export async function getDrugById(req: Request, res: Response, next: NextFunctio
         mt.med_out_of_stock,
         mt.med_selling_price AS list_selling_price,
         mt.med_pregnancy_category,
+        mt.med_indication,
         COALESCE(lc.lot_count, 0) AS lot_count,
         COALESCE(lc.expired_lot_count, 0) AS expired_lot_count,
         lc.nearest_lot_exp, lc.nearest_valid_lot_exp

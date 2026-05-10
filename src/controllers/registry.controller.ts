@@ -303,7 +303,7 @@ export async function createMedRegistry(req: Request, res: Response, next: NextF
       med_marketing_name, med_thai_name, med_cost_price, med_selling_price,
       med_medium_price, med_dosage_form, med_medical_category,
       med_essential_med_list, med_replacement, med_TMT_code, med_TPU_code,
-      med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp,
+      med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication,
     } = req.body;
     if (!med_name || !med_counting_unit || !med_marketing_name || !med_mfg || !med_exp)
       throw new AppError('ข้อมูลจำเป็น: med_name, med_counting_unit, med_marketing_name, med_mfg, med_exp', 400);
@@ -314,14 +314,14 @@ export async function createMedRegistry(req: Request, res: Response, next: NextF
           med_marketing_name, med_thai_name, med_cost_price, med_selling_price,
           med_medium_price, med_dosage_form, med_medical_category,
           med_essential_med_list, med_replacement, "med_TMT_code", "med_TPU_code",
-          med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        RETURNING *`,
       [med_name, med_generic_name, med_severity || 'ยาทั่วไป', med_counting_unit,
         med_marketing_name, med_thai_name, med_cost_price || 0, med_selling_price || 0,
         med_medium_price || 0, med_dosage_form, med_medical_category,
         med_essential_med_list, med_replacement, med_TMT_code, med_TPU_code,
-        med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp]
+        med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -335,7 +335,7 @@ export async function updateMedRegistry(req: Request, res: Response, next: NextF
       'med_marketing_name', 'med_thai_name', 'med_cost_price', 'med_selling_price',
       'med_medium_price', 'med_dosage_form', 'med_medical_category',
       'med_essential_med_list', 'med_replacement', 'med_pregnancy_category',
-      'med_dosage_form', 'med_dose_dialogue', 'med_mfg', 'med_exp',
+      'med_dosage_form', 'med_dose_dialogue', 'med_mfg', 'med_exp', 'med_indication',
     ];
     const setClauses: string[] = [];
     const params: any[] = [];
