@@ -158,10 +158,11 @@ export async function createPrescription(req: Request, res: Response, next: Next
 
       await client.query(
         `INSERT INTO ${SCHEMA}.prescription_items
-           (prescription_id, med_sid, med_id, quantity, dose, frequency, route)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+           (prescription_id, med_sid, med_id, quantity, dose, frequency, route, meal_relation, meal_sessions)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [prescription.prescription_id, item.med_sid, drugRows[0].med_id,
-        item.quantity, item.dose, item.frequency, item.route]
+        item.quantity, item.dose, item.frequency, item.route,
+        item.meal_relation || null, item.meal_sessions || null]
       );
     }
 
@@ -979,10 +980,11 @@ export async function updatePrescriptionItems(req: Request, res: Response, next:
 
       await client.query(
         `INSERT INTO ${SCHEMA}.prescription_items
-           (prescription_id, med_sid, med_id, quantity, dose, frequency, route)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+           (prescription_id, med_sid, med_id, quantity, dose, frequency, route, meal_relation, meal_sessions)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [id, item.med_sid, drugRows[0].med_id, item.quantity,
-          item.dose || '', item.frequency || 'OD', item.route || 'รับประทาน']
+          item.dose || '', item.frequency || '', item.route || 'รับประทาน',
+          item.meal_relation || null, item.meal_sessions || null]
       );
     }
 
