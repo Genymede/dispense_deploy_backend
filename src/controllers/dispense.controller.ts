@@ -462,7 +462,7 @@ export async function searchPatients(req: Request, res: Response, next: NextFunc
               sub_district, district, province, postal_code
        FROM ${SCHEMA}.patient
        WHERE first_name ILIKE $1 OR last_name ILIKE $1
-          OR hn_number ILIKE $1 OR national_id ILIKE $1
+          OR hn_number ILIKE $1 OR national_id ILIKE $1 OR phone ILIKE $1
        LIMIT 20`,
       [`%${q}%`]
     );

@@ -659,7 +659,7 @@ export async function searchPatientsRegistry(req: Request, res: Response, next: 
               p.sub_district, p.district, p.province, p.postal_code
        FROM ${SCHEMA}.patient p
        WHERE p.first_name ILIKE $1 OR p.last_name ILIKE $1
-          OR p.hn_number ILIKE $1 OR p.national_id ILIKE $1
+          OR p.hn_number ILIKE $1 OR p.national_id ILIKE $1 OR p.phone ILIKE $1
        ORDER BY p.first_name LIMIT 20`,
       [`%${q}%`]
     );
