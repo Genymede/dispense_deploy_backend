@@ -729,7 +729,7 @@ export async function createMockPrescription(req: Request, res: Response, next: 
       const rx: Record<string, any> = rxRows[0];
 
       // INSERT items
-      const frequencies = ['OD', 'BID', 'TID', 'QID', 'PRN', 'HS'];
+      const frequencies = ['วันละ 1 ครั้ง', 'วันละ 2 ครั้ง', 'วันละ 3 ครั้ง', 'วันละ 4 ครั้ง', 'ใช้เมื่อมีอาการ', 'ก่อนนอน'];
       const routes = ['รับประทาน', 'ฉีดเข้ากล้าม', 'ฉีดเข้าเส้นเลือด', 'พ่น'];
 
       for (const drug of picked) {
