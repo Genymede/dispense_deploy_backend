@@ -136,13 +136,38 @@ export async function getDrugById(req: Request, res: Response, next: NextFunctio
     const { med_sid } = req.params;
     const { rows } = await query(
       `SELECT
-        ms.*, mt.med_name, mt.med_generic_name, mt.med_marketing_name,
+        ms.med_sid, ms.med_id,
+        COALESCE(lc.lot_stock, 0) AS current_stock,
+        ms.packaging_type, ms.is_divisible, ms.location,
+        ms.med_showname, ms.med_showname_eng,
+        ms.min_quantity, ms.max_quantity,
+        ms.cost_price, ms.unit_price,
+        ms.mfg_date, ms.exp_date, ms.is_expired,
+        ms.drug_code, ms.image_url,
+        ms.created_at, ms.updated_at,
+        mt.med_name, mt.med_generic_name, mt.med_marketing_name,
         mt.med_thai_name, mt.med_medical_category AS category,
-        mt.med_dosage_form, mt.med_severity, mt.med_counting_unit AS unit,
+        mt.med_dosage_form, mt.med_severity,
+        mt.med_counting_unit AS unit,
+        mt.med_out_of_stock,
         mt.med_selling_price AS list_selling_price,
-        mt.med_pregnancy_category
+        mt.med_pregnancy_category,
+        COALESCE(lc.lot_count, 0) AS lot_count,
+        COALESCE(lc.expired_lot_count, 0) AS expired_lot_count,
+        lc.nearest_lot_exp, lc.nearest_valid_lot_exp
        FROM ${SCHEMA}.med_subwarehouse ms
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = ms.med_id
+       LEFT JOIN (
+         SELECT
+           med_sid,
+           COUNT(*) FILTER (WHERE (exp_date IS NULL OR exp_date >= CURRENT_DATE) AND quantity > 0)::int AS lot_count,
+           MIN(exp_date) FILTER (WHERE quantity > 0) AS nearest_lot_exp,
+           MIN(exp_date) FILTER (WHERE exp_date >= CURRENT_DATE AND quantity > 0) AS nearest_valid_lot_exp,
+           COUNT(*) FILTER (WHERE exp_date < CURRENT_DATE AND quantity > 0)::int AS expired_lot_count,
+           COALESCE(SUM(quantity) FILTER (WHERE exp_date IS NULL OR exp_date >= CURRENT_DATE), 0)::int AS lot_stock
+         FROM ${SCHEMA}.med_stock_lots
+         GROUP BY med_sid
+       ) lc ON lc.med_sid = ms.med_sid
        WHERE ms.med_sid = $1`,
       [med_sid]
     );
