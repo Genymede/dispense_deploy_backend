@@ -31,7 +31,7 @@ export async function getPrescriptions(req: Request, res: Response, next: NextFu
       `SELECT
          pr.*,
          pa.first_name, pa.last_name, pa.hn_number,
-         pa.blood_group, pa.photo AS patient_photo,
+         pa.blood_group, pa.gender, pa.photo AS patient_photo,
          pa.treatment_right, pa.treatment_right_note,
          CONCAT(pa.first_name, ' ', pa.last_name) AS patient_name,
          COALESCE(pdoc.firstname_th || ' ' || pdoc.lastname_th, adoc.email, '') AS doctor_name,
