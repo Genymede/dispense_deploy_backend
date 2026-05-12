@@ -38,9 +38,15 @@ export async function reportMedSubwarehouse(req: Request, res: Response, next: N
               CASE WHEN ms.is_expired OR ms.exp_date < NOW() THEN 'หมดอายุ'
                    WHEN ms.med_quantity=0 THEN 'หมดสต็อก'
                    WHEN ms.min_quantity IS NOT NULL AND ms.med_quantity < ms.min_quantity THEN 'ต่ำกว่าขั้นต่ำ'
-                   ELSE 'ปกติ' END AS stock_status
+                   ELSE 'ปกติ' END AS stock_status,
+              lc.nearest_valid_lot_exp
        FROM ${SCHEMA}.med_subwarehouse ms
        JOIN ${SCHEMA}.med_table mt ON mt.med_id=ms.med_id
+       LEFT JOIN (
+         SELECT med_sid,
+           MIN(exp_date) FILTER (WHERE exp_date >= CURRENT_DATE AND quantity > 0) AS nearest_valid_lot_exp
+         FROM ${SCHEMA}.med_stock_lots GROUP BY med_sid
+       ) lc ON lc.med_sid = ms.med_sid
        ${w} ORDER BY drug_name LIMIT $${p} OFFSET $${p+1}`, [...params, limit, offset]);
     const cr = await query(`SELECT COUNT(*) AS total FROM ${SCHEMA}.med_subwarehouse ms JOIN ${SCHEMA}.med_table mt ON mt.med_id=ms.med_id ${w}`, params);
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
