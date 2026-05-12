@@ -238,24 +238,25 @@ export async function getRadRegistry(req: Request, res: Response, next: NextFunc
     const { search, status } = req.query;
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
-    if (search) { where += ` AND (mt.med_name ILIKE $${p} OR rr.diagnosis ILIKE $${p} OR req.email ILIKE $${p})`; params.push(`%${search}%`); p++; }
+    if (search) { where += ` AND (mt.med_name ILIKE $${p} OR rr.diagnosis ILIKE $${p} OR req_u.email ILIKE $${p})`; params.push(`%${search}%`); p++; }
     if (status) { where += ` AND rr.status = $${p}`; params.push(status); p++; }
     const { rows } = await query(
       `SELECT rr.*,
               mt.med_name, mt.med_generic_name, mt.med_counting_unit,
               pa.first_name || ' ' || pa.last_name AS patient_name, pa.hn_number,
-              req.email AS requested_by_name,
-              apr.email AS approved_by_name
+              COALESCE(req_p.firstname_th || ' ' || req_p.lastname_th, req_u.email, '') AS requested_by_name,
+              COALESCE(apr_p.firstname_th || ' ' || apr_p.lastname_th, apr_u.email, '') AS approved_by_name
        FROM ${SCHEMA}.rad_registry rr
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = rr.med_id
-       LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id = rr.patient_id
-       LEFT JOIN auth.users req ON req.id = rr.requested_by
-       LEFT JOIN auth.users apr ON apr.id = rr.approved_by
+       LEFT JOIN ${SCHEMA}.patient  pa    ON pa.patient_id  = rr.patient_id
+       LEFT JOIN public.profiles    req_p ON req_p.id       = rr.requested_by
+       LEFT JOIN auth.users         req_u ON req_u.id       = rr.requested_by
+       LEFT JOIN public.profiles    apr_p ON apr_p.id       = rr.approved_by
+       LEFT JOIN auth.users         apr_u ON apr_u.id       = rr.approved_by
        ${where} ORDER BY rr.request_time DESC LIMIT $${p} OFFSET $${p + 1}`, [...params, limit, offset]);
     const cr = await query(
       `SELECT COUNT(*) AS total FROM ${SCHEMA}.rad_registry rr
        JOIN ${SCHEMA}.med_table mt ON mt.med_id = rr.med_id
-       LEFT JOIN auth.users req ON req.id = rr.requested_by
        ${where}`, params);
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
   } catch (err) { next(err); }
@@ -304,6 +305,7 @@ export async function createMedRegistry(req: Request, res: Response, next: NextF
       med_medium_price, med_dosage_form, med_medical_category,
       med_essential_med_list, med_replacement, med_TMT_code, med_TPU_code,
       med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication,
+      main_item_id,
     } = req.body;
     if (!med_name || !med_counting_unit || !med_marketing_name || !med_mfg || !med_exp)
       throw new AppError('ข้อมูลจำเป็น: med_name, med_counting_unit, med_marketing_name, med_mfg, med_exp', 400);
@@ -314,14 +316,16 @@ export async function createMedRegistry(req: Request, res: Response, next: NextF
           med_marketing_name, med_thai_name, med_cost_price, med_selling_price,
           med_medium_price, med_dosage_form, med_medical_category,
           med_essential_med_list, med_replacement, "med_TMT_code", "med_TPU_code",
-          med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+          med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication,
+          main_item_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        RETURNING *`,
       [med_name, med_generic_name, med_severity || 'ยาทั่วไป', med_counting_unit,
         med_marketing_name, med_thai_name, med_cost_price || 0, med_selling_price || 0,
         med_medium_price || 0, med_dosage_form, med_medical_category,
         med_essential_med_list, med_replacement, med_TMT_code, med_TPU_code,
-        med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication || null]
+        med_dose_dialogue, med_pregnancy_category, med_mfg, med_exp, med_indication || null,
+        main_item_id || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -336,6 +340,7 @@ export async function updateMedRegistry(req: Request, res: Response, next: NextF
       'med_medium_price', 'med_dosage_form', 'med_medical_category',
       'med_essential_med_list', 'med_replacement', 'med_pregnancy_category',
       'med_dosage_form', 'med_dose_dialogue', 'med_mfg', 'med_exp', 'med_indication',
+      'main_item_id',
     ];
     const setClauses: string[] = [];
     const params: any[] = [];
