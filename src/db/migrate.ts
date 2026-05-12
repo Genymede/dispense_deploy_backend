@@ -291,6 +291,10 @@ const migrations: string[] = [
 
   // ── schema optimisation: drop med_stock_history ──────────────────────────────
   `DROP TABLE IF EXISTS ${SCHEMA}.med_stock_history`,
+
+  // ── med_table: med_mfg/med_exp ไม่ควร NOT NULL — เป็น lot-level ไม่ใช่ registry-level
+  `ALTER TABLE ${SCHEMA}.med_table ALTER COLUMN med_mfg DROP NOT NULL`,
+  `ALTER TABLE ${SCHEMA}.med_table ALTER COLUMN med_exp DROP NOT NULL`,
 ];
 
 async function migrate() {
