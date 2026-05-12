@@ -3,6 +3,27 @@ import { query, pool, SCHEMA, resolveUserId, resolvePatientId, resolveMedId, pag
 import { AppError } from '../middleware/errorHandler';
 import { deductFefo, recalcTotal } from './stock.controller';
 
+// ── inventory.items search (bridge to main warehouse) ─────────────────────────
+export async function searchInventoryItems(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { q } = req.query;
+    if (!q || String(q).trim().length < 1) return res.json([]);
+    const { rows } = await query(
+      `SELECT id, name, code FROM inventory.items WHERE name ILIKE $1 ORDER BY name LIMIT 20`,
+      [`%${q}%`]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+}
+
+export async function getInventoryItemById(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    const { rows } = await query(`SELECT id, name, code FROM inventory.items WHERE id = $1`, [id]);
+    res.json(rows[0] ?? null);
+  } catch (err) { next(err); }
+}
+
 // ═══ REGISTRY: ทะเบียนยาหลัก (med_table) ═══════════════════════════════════════
 
 export async function getMedRegistry(req: Request, res: Response, next: NextFunction) {

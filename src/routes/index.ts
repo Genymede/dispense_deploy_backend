@@ -15,6 +15,7 @@ import {
   getOverdueMed, updateOverdueMed,
   getRadRegistry, createRadRequest, updateRadRequest, deleteRadRequest,
   getMedError, searchPatientsRegistry, searchMedTableRegistry,
+  searchInventoryItems, getInventoryItemById,
   createMedUsage, updateMedUsage,
   createDelivery, updateDelivery, deleteDelivery,
   createOverdue, updateOverdue, deleteOverdue,
@@ -148,6 +149,10 @@ r.get('/sub-warehouse', getSubWarehouses);
 r.get('/registry/categories',       getMedCategories);
 r.get('/registry/search/patients',  searchPatientsRegistry);
 r.get('/registry/search/drugs',     searchMedTableRegistry);
+
+// ── inventory.items search ──────────────────────────────────────────────────────
+r.get('/registry/inventory-items',       searchInventoryItems);
+r.get('/registry/inventory-items/:id',   getInventoryItemById);
 
 // ── Registry: ทะเบียนยาหลัก ────────────────────────────────────────────────────
 r.get('/registry/drugs',             getMedRegistry);
