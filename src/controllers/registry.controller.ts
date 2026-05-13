@@ -213,7 +213,7 @@ export async function getMedDelivery(req: Request, res: Response, next: NextFunc
     const { search, status } = req.query;
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
-    if (search) { where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR md.receiver_name ILIKE $${p} OR md.receiver_phone ILIKE $${p})`; params.push(`%${search}%`); p++; }
+    if (search) { where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR md.receiver_name ILIKE $${p} OR md.receiver_phone ILIKE $${p})`; params.push(`%${search}%`); p++; }
     if (status) { where += ` AND md.status = $${p}`; params.push(status); p++; }
     const { rows } = await query(
       `SELECT md.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number, pa.phone AS patient_phone, pa.photo AS patient_photo
