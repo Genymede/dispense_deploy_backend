@@ -496,7 +496,7 @@ export async function safetyCheck(req: Request, res: Response, next: NextFunctio
 
     // ดึงรายการยาในใบสั่ง
     const { rows: rxItems } = await query(
-      `SELECT pi.med_sid, pi.med_id, pi.quantity, pi.dose, pi.frequency,
+      `SELECT pi.item_id, pi.med_sid, pi.med_id, pi.quantity, pi.dose, pi.frequency,
               mt.med_name, mt.med_generic_name, mt.med_medical_category,
               mt.med_severity, mt.med_pregnancy_category,
               ms.med_quantity AS stock_available,
