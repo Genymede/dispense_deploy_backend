@@ -702,7 +702,7 @@ export async function createMockPrescription(req: Request, res: Response, next: 
          )`
     );
 
-    const wards = ['OPD', 'IPD', 'ER', 'DENT', 'GEN'];
+    const wards = ['OPD', 'IPD', 'ER', 'DENT'];
     const created = [];
 
     for (const patient of patients) {
