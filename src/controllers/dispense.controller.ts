@@ -702,7 +702,7 @@ export async function createMockPrescription(req: Request, res: Response, next: 
          )`
     );
 
-    const wards = ['OPD', 'IPD', 'ER', 'ICU', 'หอผู้ป่วยชาย', 'หอผู้ป่วยหญิง', 'กุมารเวช', 'สูตินรีเวช'];
+    const wards = ['OPD', 'IPD', 'ER', 'DENT', 'GEN'];
     const created = [];
 
     for (const patient of patients) {

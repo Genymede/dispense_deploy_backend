@@ -4,6 +4,7 @@ import { query, pool, SCHEMA } from '../db/pool';
 // ── Ward → queue prefix mapping ───────────────────────────────────────────────
 const WARD_PREFIX_MAP: Record<string, string> = {
   OPD: 'O', IPD: 'I', ER: 'E', ICU: 'C', OR: 'R', ANC: 'N', LR: 'L',
+  DENT: 'D', GEN: 'G',
 };
 
 function wardToPrefix(ward?: string | null): string {
