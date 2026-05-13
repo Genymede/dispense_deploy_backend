@@ -23,7 +23,10 @@ export async function getPrescriptions(req: Request, res: Response, next: NextFu
     if (date_from) { where += ` AND DATE(${dateField} AT TIME ZONE 'Asia/Bangkok') >= $${p}::date`; params.push(date_from); p++; }
     if (date_to) { where += ` AND DATE(${dateField} AT TIME ZONE 'Asia/Bangkok') <= $${p}::date`; params.push(date_to); p++; }
     if (search) {
-      where += ` AND (pr.prescription_no ILIKE $${p} OR pa.first_name ILIKE $${p} OR pa.last_name ILIKE $${p} OR pa.hn_number ILIKE $${p})`;
+      where += ` AND (
+        EXISTS (SELECT 1 FROM ${SCHEMA}.queue_entries qe WHERE qe.patient_id = pr.patient_id AND qe.queue_number ILIKE $${p})
+        OR pa.first_name ILIKE $${p} OR pa.last_name ILIKE $${p} OR pa.hn_number ILIKE $${p}
+      )`;
       params.push(`%${search}%`); p++;
     }
 
