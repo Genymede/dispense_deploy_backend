@@ -32,7 +32,7 @@ export async function getMedRegistry(req: Request, res: Response, next: NextFunc
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
     if (search) {
-      where += ` AND (med_name ILIKE $${p} OR med_generic_name ILIKE $${p} OR med_marketing_name ILIKE $${p} OR "med_TMT_code" ILIKE $${p} OR med_thai_name ILIKE $${p})`;
+      where += ` AND (med_name ILIKE $${p} OR med_generic_name ILIKE $${p} OR med_marketing_name ILIKE $${p} OR med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (category) { where += ` AND med_medical_category = $${p}`; params.push(category); p++; }
