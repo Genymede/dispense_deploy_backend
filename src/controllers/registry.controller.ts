@@ -189,7 +189,12 @@ export async function getDispenseHistory(req: Request, res: Response, next: Next
       `SELECT pr.*, CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number,
               COALESCE(pdoc.firstname_th || ' ' || pdoc.lastname_th, adoc.email, '') AS doctor_name,
               COALESCE(pdisp.firstname_th || ' ' || pdisp.lastname_th, adisp.email, '') AS dispensed_by_name,
-              COUNT(pi.item_id)::int AS item_count
+              COUNT(pi.item_id)::int AS item_count,
+              (SELECT COALESCE(SUM(pi2.quantity * COALESCE(ms2.unit_price, mt2.med_selling_price, 0)), 0)
+               FROM   ${SCHEMA}.prescription_items pi2
+               JOIN   ${SCHEMA}.med_subwarehouse ms2 ON ms2.med_sid = pi2.med_sid
+               JOIN   ${SCHEMA}.med_table mt2        ON mt2.med_id  = pi2.med_id
+               WHERE  pi2.prescription_id = pr.prescription_id) AS total_cost
        FROM ${SCHEMA}.prescriptions pr
        LEFT JOIN ${SCHEMA}.patient pa   ON pa.patient_id = pr.patient_id
        LEFT JOIN public.profiles pdoc   ON pdoc.id = pr.doctor_id
