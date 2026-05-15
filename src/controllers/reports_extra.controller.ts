@@ -253,10 +253,11 @@ export async function reportMedDelivery(req: Request, res: Response, next: NextF
 // ── Overdue Med ───────────────────────────────────────────────────────────────
 export async function reportOverdueMed(req: Request, res: Response, next: NextFunction) {
   try {
-    const { dispensed } = req.query;
+    const { dispensed, search } = req.query;
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let w = 'WHERE 1=1'; let p = 1;
     if (dispensed !== undefined) { w += ` AND om.dispense_status=$${p}`; params.push(dispensed === 'true'); p++; }
+    if (search) { w += ` AND (ms.med_showname ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p} OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p})`; params.push(`%${search}%`); p++; }
     const { rows } = await query(
       `SELECT om.*, mt.med_name, mt.med_generic_name, mt.med_counting_unit AS unit,
               CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number,
