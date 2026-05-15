@@ -1232,7 +1232,7 @@ export async function getMedProblems(req: Request, res: Response, next: NextFunc
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let w = 'WHERE 1=1'; let p = 1;
     if (search) {
-      w += ` AND (mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mp.description ILIKE $${p} OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p})`;
+      w += ` AND (mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p} OR mp.description ILIKE $${p} OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (resolved !== undefined) { w += ` AND mp.is_resolved=$${p}`; params.push(resolved === 'true'); p++; }
