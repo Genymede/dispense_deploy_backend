@@ -704,6 +704,13 @@ export async function updateRadRequest(req: Request, res: Response, next: NextFu
   }
 
   try {
+    const cur = await query(`SELECT status FROM ${SCHEMA}.rad_registry WHERE rad_id = $1`, [rad_id]);
+    if (!cur.rows.length) throw new AppError('ไม่พบรายการ', 404);
+    const curStatus = cur.rows[0].status;
+    const isStatusTransition = status && ['approved', 'rejected'].includes(status) && curStatus === 'pending';
+    if (!isStatusTransition && ['approved', 'rejected', 'dispensed', 'cancelled'].includes(curStatus))
+      throw new AppError('ไม่สามารถแก้ไขรายการที่ดำเนินการแล้ว', 409);
+
     const { rows } = await query(
       `UPDATE ${SCHEMA}.rad_registry
        SET status               = COALESCE($1,  status),
