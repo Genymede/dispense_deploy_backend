@@ -39,12 +39,13 @@ export async function reportMedSubwarehouse(req: Request, res: Response, next: N
                    WHEN ms.med_quantity=0 THEN 'หมดสต็อก'
                    WHEN ms.min_quantity IS NOT NULL AND ms.med_quantity < ms.min_quantity THEN 'ต่ำกว่าขั้นต่ำ'
                    ELSE 'ปกติ' END AS stock_status,
-              lc.nearest_valid_lot_exp
+              lc.nearest_valid_lot_exp, lc.lot_count
        FROM ${SCHEMA}.med_subwarehouse ms
        JOIN ${SCHEMA}.med_table mt ON mt.med_id=ms.med_id
        LEFT JOIN (
          SELECT med_sid,
-           MIN(exp_date) FILTER (WHERE exp_date >= CURRENT_DATE AND quantity > 0) AS nearest_valid_lot_exp
+           MIN(exp_date) FILTER (WHERE exp_date >= CURRENT_DATE AND quantity > 0) AS nearest_valid_lot_exp,
+           COUNT(*) FILTER (WHERE quantity > 0) AS lot_count
          FROM ${SCHEMA}.med_stock_lots GROUP BY med_sid
        ) lc ON lc.med_sid = ms.med_sid
        ${w} ORDER BY drug_name LIMIT $${p} OFFSET $${p+1}`, [...params, limit, offset]);
@@ -257,7 +258,7 @@ export async function reportOverdueMed(req: Request, res: Response, next: NextFu
     const params: any[] = []; let w = 'WHERE 1=1'; let p = 1;
     if (dispensed !== undefined) { w += ` AND om.dispense_status=$${p}`; params.push(dispensed === 'true'); p++; }
     const { rows } = await query(
-      `SELECT om.*, mt.med_name, mt.med_generic_name,
+      `SELECT om.*, mt.med_name, mt.med_generic_name, mt.med_counting_unit AS unit,
               CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number,
               COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS doctor_name,
               COALESCE(ms.med_showname, mt.med_name) AS sub_drug_name
