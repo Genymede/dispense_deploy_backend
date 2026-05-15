@@ -85,7 +85,11 @@ export async function reportMedOrderHistory(req: Request, res: Response, next: N
       w += ` AND (pr.prescription_no ILIKE $${p}
                OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p}
                OR pa.hn_number ILIKE $${p}
-               OR mt.med_name ILIKE $${p})`;
+               OR pa.national_id ILIKE $${p}
+               OR ms.med_showname ILIKE $${p}
+               OR mt.med_name ILIKE $${p}
+               OR mt.med_generic_name ILIKE $${p}
+               OR mt.med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (df(status))    { w += ` AND pr.status=$${p}`;      params.push(status);    p++; }
@@ -143,7 +147,7 @@ export async function reportMedUsageHistory(req: Request, res: Response, next: N
     const params: any[] = []; let w = 'WHERE 1=1'; let p = 1;
     if (patient_id) { w += ` AND pr.patient_id=$${p}`; params.push(Number(patient_id)); p++; }
     if (search) {
-      w += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR mt.med_name ILIKE $${p})`;
+      w += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (status) { w += ` AND pr.status=$${p}`; params.push(status); p++; }

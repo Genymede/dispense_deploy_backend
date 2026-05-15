@@ -304,7 +304,7 @@ export async function getAllergyRegistry(req: Request, res: Response, next: Next
     const params: any[] = [];
     let where = 'WHERE 1=1'; let p = 1;
     if (search) {
-      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR mt.med_name ILIKE $${p})`;
+      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (severity) { where += ` AND ar.severity = $${p}`; params.push(severity); p++; }
@@ -332,7 +332,7 @@ export async function getAdrRegistry(req: Request, res: Response, next: NextFunc
     const params: any[] = [];
     let where = 'WHERE 1=1'; let p = 1;
     if (search) {
-      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR mt.med_name ILIKE $${p})`;
+      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     const offset = (Number(page) - 1) * Number(limit);

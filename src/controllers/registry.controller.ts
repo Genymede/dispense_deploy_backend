@@ -73,7 +73,7 @@ export async function getAllergyRegistry(req: Request, res: Response, next: Next
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
     if (search) {
-      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR mt.med_name ILIKE $${p} OR ar.symptoms ILIKE $${p})`;
+      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p} OR ar.symptoms ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (severity) { where += ` AND ar.severity = $${p}`; params.push(severity); p++; }
@@ -101,7 +101,7 @@ export async function getAdrRegistry(req: Request, res: Response, next: NextFunc
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
     if (search) {
-      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR mt.med_name ILIKE $${p})`;
+      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (severity)   { where += ` AND adr.severity = $${p}`;     params.push(severity);          p++; }
@@ -157,7 +157,7 @@ export async function getMedUsage(req: Request, res: Response, next: NextFunctio
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
     if (patient_id) { where += ` AND mu.patient_id = $${p}`; params.push(Number(patient_id)); p++; }
     if (search) {
-      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR mt.med_name ILIKE $${p})`;
+      where += ` AND (CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p} OR mt.med_name ILIKE $${p} OR mt.med_generic_name ILIKE $${p} OR mt.med_thai_name ILIKE $${p})`;
       params.push(`%${search}%`); p++;
     }
     if (status) { where += ` AND mu.usage_status = $${p}`; params.push(status); p++; }
@@ -180,7 +180,7 @@ export async function getDispenseHistory(req: Request, res: Response, next: Next
     const { search, status, ward, date_from, date_to } = req.query;
     const { limit, offset } = paginate(req.query.page, req.query.limit);
     const params: any[] = []; let where = 'WHERE 1=1'; let p = 1;
-    if (search) { where += ` AND (pr.prescription_no ILIKE $${p} OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p})`; params.push(`%${search}%`); p++; }
+    if (search) { where += ` AND (pr.prescription_no ILIKE $${p} OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p} OR pa.hn_number ILIKE $${p} OR pa.national_id ILIKE $${p})`; params.push(`%${search}%`); p++; }
     if (status) { where += ` AND pr.status = $${p}`; params.push(status); p++; }
     if (ward) { where += ` AND pr.ward = $${p}`; params.push(ward); p++; }
     if (date_from) { where += ` AND pr.dispensed_at >= $${p}`; params.push(date_from); p++; }
