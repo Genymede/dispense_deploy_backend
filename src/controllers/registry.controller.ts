@@ -240,7 +240,7 @@ export async function getOverdueMed(req: Request, res: Response, next: NextFunct
     if (search) { where += ` AND (mt.med_name ILIKE $${p} OR CONCAT(pa.first_name,' ',pa.last_name) ILIKE $${p})`; params.push(`%${search}%`); p++; }
     if (dispensed !== undefined) { where += ` AND om.dispense_status = $${p}`; params.push(dispensed === 'true'); p++; }
     const { rows } = await query(
-      `SELECT om.*, mt.med_name, mt.med_generic_name,
+      `SELECT om.*, mt.med_name, mt.med_generic_name, mt.med_counting_unit AS unit,
               CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number,
               COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS doctor_name,
               COALESCE(ms.med_showname, ms.packaging_type::text) AS sub_drug_name,
