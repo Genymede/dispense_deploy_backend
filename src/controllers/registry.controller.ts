@@ -625,19 +625,90 @@ export async function createRadRequest(req: Request, res: Response, next: NextFu
 }
 
 export async function updateRadRequest(req: Request, res: Response, next: NextFunction) {
+  const { rad_id } = req.params;
+  const {
+    status, approved_by, note, quantity, unit,
+    diagnosis, infection_site, clinical_indication,
+    culture_result, duration_days, prescriber_name, ward,
+  } = req.body;
+
+  if (status === 'dispensed') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL search_path TO ${SCHEMA}, public`);
+
+      const { rows: radRows } = await client.query(
+        `SELECT * FROM ${SCHEMA}.rad_registry WHERE rad_id = $1 FOR UPDATE`, [rad_id]
+      );
+      if (!radRows.length) throw new AppError('ไม่พบรายการ', 404);
+      const rad = radRows[0];
+      if (rad.status === 'dispensed') throw new AppError('จ่ายยาไปแล้ว', 409);
+
+      const dispenseQty = Number(quantity ?? rad.quantity);
+
+      // ถ้าไม่มี med_sid ให้ auto-pick คลังที่มีสต็อกมากสุดสำหรับ med_id นี้
+      let med_sid = rad.med_sid ? Number(rad.med_sid) : null;
+      if (!med_sid) {
+        const { rows: swPick } = await client.query(
+          `SELECT med_sid FROM ${SCHEMA}.med_subwarehouse
+           WHERE med_id = $1 ORDER BY med_quantity DESC LIMIT 1`, [rad.med_id]
+        );
+        if (!swPick.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
+        med_sid = Number(swPick[0].med_sid);
+      }
+
+      const { rows: swRows } = await client.query(
+        `SELECT med_quantity FROM ${SCHEMA}.med_subwarehouse WHERE med_sid = $1 FOR UPDATE`, [med_sid]
+      );
+      if (!swRows.length) throw new AppError('ไม่พบยาใน subwarehouse', 404);
+      const balBefore = parseInt(swRows[0].med_quantity);
+      if (balBefore < dispenseQty)
+        throw new AppError(`สต็อกไม่เพียงพอ (มี ${balBefore}, ต้องการ ${dispenseQty})`, 400);
+
+      const consumed   = await deductFefo(med_sid, dispenseQty, client);
+      const balAfter   = await recalcTotal(med_sid, client);
+      const primaryLot = consumed[0];
+
+      await client.query(
+        `INSERT INTO ${SCHEMA}.stock_transactions
+           (med_sid, med_id, tx_type, quantity, balance_before, balance_after,
+            lot_number, expiry_date, performed_by, note)
+         VALUES ($1,$2,'out',$3,$4,$5,$6,$7,$8,'จ่ายยา RAD')`,
+        [med_sid, rad.med_id, dispenseQty, balBefore, balAfter,
+         primaryLot?.lot_number ?? null, primaryLot?.exp_date ?? null,
+         approved_by ?? null]
+      );
+
+      const { rows } = await client.query(
+        `UPDATE ${SCHEMA}.rad_registry
+         SET status         = 'dispensed',
+             med_sid        = $1,
+             approved_by    = COALESCE($2, approved_by),
+             dispensed_time = NOW(),
+             note           = COALESCE($3, note),
+             updated_at     = NOW()
+         WHERE rad_id = $4 RETURNING *`,
+        [med_sid, approved_by ?? null, note, rad_id]
+      );
+
+      await client.query('COMMIT');
+      res.json(rows[0]);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      next(err);
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
   try {
-    const { rad_id } = req.params;
-    const {
-      status, approved_by, note, quantity, unit,
-      diagnosis, infection_site, clinical_indication,
-      culture_result, duration_days, prescriber_name, ward,
-    } = req.body;
     const { rows } = await query(
       `UPDATE ${SCHEMA}.rad_registry
        SET status               = COALESCE($1,  status),
            approved_by          = COALESCE($2,  approved_by),
            approved_time        = CASE WHEN $1 IN ('approved','rejected') THEN NOW() ELSE approved_time END,
-           dispensed_time       = CASE WHEN $1 = 'dispensed' THEN NOW() ELSE dispensed_time END,
            note                 = COALESCE($3,  note),
            quantity             = COALESCE($4,  quantity),
            unit                 = COALESCE($5,  unit),
