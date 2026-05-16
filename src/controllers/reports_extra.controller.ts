@@ -224,11 +224,13 @@ export async function reportMedProblem(req: Request, res: Response, next: NextFu
     if (type) { w += ` AND mp.problem_type=$${p}`; params.push(type); p++; }
     const { rows } = await query(
       `SELECT mp.*, mt.med_name, mt.med_generic_name,
-              COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS reported_by_name
+              COALESCE(pu.firstname_th || ' ' || pu.lastname_th, au.email, '') AS reported_by_name,
+              CONCAT(pa.first_name,' ',pa.last_name) AS patient_name, pa.hn_number
        FROM ${SCHEMA}.med_problem mp
        JOIN ${SCHEMA}.med_table mt ON mt.med_id=mp.med_id
        LEFT JOIN public.profiles pu ON pu.id=mp.reported_by
        LEFT JOIN auth.users     au ON au.id=mp.reported_by
+       LEFT JOIN ${SCHEMA}.patient pa ON pa.patient_id=mp.patient_id
        ${w} ORDER BY mp.reported_at DESC LIMIT $${p} OFFSET $${p+1}`, [...params, limit, offset]);
     const cr = await query(`SELECT COUNT(*) AS total FROM ${SCHEMA}.med_problem mp JOIN ${SCHEMA}.med_table mt ON mt.med_id=mp.med_id ${w}`, params);
     res.json({ data: rows, total: parseInt(cr.rows[0]?.total ?? '0') });
